@@ -148,9 +148,7 @@ def lang(t:str):
 def wants_web(t:str)->bool:
     text=str(t or "").strip()
     if not text or GREETING_ONLY.fullmatch(text): return False
-    if WEB_EXPLICIT.search(text) or WEB_FRESH.search(text) or WEB_CONTEXT.search(text): return True
-    if len(text)>=8 and not text.startswith(("/plugin","/skill")): return True
-    return False
+    return bool(WEB_EXPLICIT.search(text) or WEB_FRESH.search(text) or WEB_CONTEXT.search(text))
 
 def clean_query(t:str)->str:
     t=re.sub(r"(검색해줘|검색해|찾아줘|찾아봐|찾아서|알려줘|알려 줘|정리해줘|정리해 줘|알려|찾아|검색|조회해줘|조회해|확인해줘|확인해|최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|소식|뉴스|정보)"," ",t,flags=re.I)
@@ -220,14 +218,20 @@ def make_conversation_title(message):
     return text[:60].rstrip() or "새 대화"
 
 async def generate_title(message):
-    text=re.sub(r"```[\s\S]*?```"," ",str(message or ""))
-    text=re.sub(r"\s+"," ",text).strip()
-    text=re.sub(r"^(질문|요청|문의|제목)\s*[:：-]\s*","",text,flags=re.I)
-    text=re.sub(r"(?:해줘|해주세요|해 주세요|알려줘|알려주세요|설명해줘|설명해주세요|부탁해)[.!?~]*$","",text).strip()
-    text=re.sub(r"^[\[\(【].*?[\]\)】]\s*","",text)
-    text=re.sub(r"\s+"," ",text).strip(" .!?~")
+    text=re.sub(r"\s+"," ",str(message or "")).strip()
     if not text:return "새 대화"
-    return text[:32].rstrip()+("…" if len(text)>32 else "")
+    try:
+        msgs=[
+            {"role":"system","content":"대화 제목을 아주 짧게 요약하세요. 사용자의 요청 핵심만 3~8단어로 표현하고 질문형 문장이나 설명을 만들지 마세요. 이모지와 특수 기호를 쓰지 말고 제목만 출력하세요."},
+            {"role":"user","content":text[:2000]}
+        ]
+        raw=await generate_once(msgs,0.1,24)
+        title=re.sub(r"[^0-9A-Za-z가-힣ぁ-ゖァ-ヺ ]"," ",str(raw or ""))
+        title=re.sub(r"\s+"," ",title).strip()
+        if title:return title[:32].rstrip()
+    except Exception:
+        pass
+    return make_conversation_title(text)[:32]
 
 def save_chat(uid,msg,reply,mode,sources,cid="",attachments=None):
     cid=ensure_conversation(uid,cid)
@@ -305,6 +309,8 @@ def init_db():
         )""")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_conversation_folders_user_idx ON mirae_conversation_folders(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_conversations_user_idx ON mirae_conversations(user_id,updated_at DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_chat_history_user_created_idx ON mirae_chat_history(user_id,created_at DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_chat_history_conversation_idx ON mirae_chat_history(user_id,conversation_id,created_at ASC,id ASC)")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_memories(
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
@@ -395,7 +401,7 @@ async def extract_files(files:list[UploadFile]=File(...)):
     for f in files:
         data=await f.read()
         if len(data)>100*1024*1024:raise HTTPException(413,f"{f.filename} 파일이 100MB를 초과합니다.")
-        text=extract_file_text(f.filename or "file",data)
+        text=await asyncio.to_thread(extract_file_text,f.filename or "file",data)
         # 대용량 파일은 청크 단위로 잘라 모델 컨텍스트를 보호합니다.
         chunks=[text[i:i+16000] for i in range(0,len(text),16000)] or [""]
         out.append({"name":f.filename or "file","type":f.content_type or "application/octet-stream","size":len(data),"text":text[:200000],"chunks":chunks[:100],"chunk_count":len(chunks),"truncated":len(text)>200000})
@@ -437,14 +443,15 @@ async def generate_image_payload(prompt:str):
             return {"ok":True,"url":"data:image/png;base64,"+base64.b64encode(image_bytes).decode(),"model":CLOUDFLARE_IMAGE_MODEL,"prompt":prompt,"translated_prompt":translated_prompt}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502,"Cloudflare 이미지 생성 요청에 실패했습니다: "+type(e).__name__)
-async def classify_image_intent(message:str):
+def classify_image_intent(message:str):
     text=str(message or "").strip()
     if not text:return {"generate":False,"prompt":""}
-    msgs=[{"role":"system","content":"Decide from meaning, not keywords, whether the user asks Mirae to CREATE an image. Return ONLY JSON with generate boolean and prompt string. Existing-image analysis/editing is not generation."},{"role":"user","content":text[:4000]}]
-    try:
-        raw=await generate_once(msgs,0.0,100); m=re.search(r"\{.*\}",raw,re.S); obj=json.loads(m.group(0)) if m else {}
-        return {"generate":bool(obj.get("generate")),"prompt":str(obj.get("prompt") or text)[:4000]}
-    except Exception:return {"generate":False,"prompt":""}
+    terms=("이미지","그림","일러스트","사진","포스터","아이콘","로고")
+    create=("만들","생성","그려","제작")
+    if not any(a in text for a in terms) or not any(b in text for b in create):
+        return {"generate":False,"prompt":""}
+    return {"generate":True,"prompt":text[:4000]}
+
 @app.post("/images/generate")
 async def generate_image(data:dict[str,Any],request:Request):
     if not session_user(request): raise HTTPException(401,"로그인이 필요합니다.")
@@ -596,30 +603,55 @@ async def put_settings(data:Settings,request:Request):
     return result
 
 @app.get("/history")
-async def history(request:Request):
+async def history(request:Request,limit:int=200):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    limit=max(1,min(limit,500))
     with db() as c:
         r=c.execute("""SELECT h.id,h.role,h.content,h.mode,h.model,h.sources,h.conversation_id,h.attachments,h.created_at,
                               COALESCE(cv.title,'새 대화') AS conversation_title
                        FROM mirae_chat_history h
                        LEFT JOIN mirae_conversations cv ON cv.id=h.conversation_id
-                       WHERE h.user_id=%s ORDER BY h.created_at ASC LIMIT 5000""",[u["id"]]).fetchall()
-    return r
+                       WHERE h.user_id=%s ORDER BY h.created_at DESC,h.id DESC LIMIT %s""",[u["id"],limit]).fetchall()
+    return list(reversed(r))
 
 @app.get("/conversations")
 async def conversations(request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
     with db() as c:
-        rows=c.execute("SELECT id,title,created_at,updated_at,favorite,folder_id,share_code FROM mirae_conversations WHERE user_id=%s ORDER BY favorite DESC,updated_at DESC LIMIT 500",[u["id"]]).fetchall()
-        for row in rows:
-            if row["title"]=="새 대화" or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+",str(row["title"] or "").strip()):
-                first=c.execute("SELECT content FROM mirae_chat_history WHERE user_id=%s AND conversation_id=%s AND role='user' ORDER BY created_at ASC,id ASC LIMIT 1",[u["id"],row["id"]]).fetchone()
-                if first:
-                    title=make_conversation_title(first["content"])
-                    c.execute("UPDATE mirae_conversations SET title=%s WHERE id=%s AND user_id=%s",[title,row["id"],u["id"]]);row["title"]=title
-        c.commit()
+        rows=c.execute("""SELECT c.id,c.title,c.created_at,c.updated_at,c.favorite,c.folder_id,c.share_code,
+                                 first_msg.content AS first_user_message
+                          FROM mirae_conversations c
+                          LEFT JOIN LATERAL (
+                              SELECT h.content
+                              FROM mirae_chat_history h
+                              WHERE h.user_id=c.user_id AND h.conversation_id=c.id AND h.role='user'
+                              ORDER BY h.created_at ASC,h.id ASC LIMIT 1
+                          ) first_msg ON true
+                          WHERE c.user_id=%s
+                          ORDER BY c.favorite DESC,c.updated_at DESC LIMIT 500""",[u["id"]]).fetchall()
+    out=[]
+    for row in rows:
+        item=dict(row)
+        title=str(item.get("title") or "")
+        if title=="새 대화" or ("@" in title and "." in title):
+            item["title"]=make_conversation_title(item.get("first_user_message",""))
+        item.pop("first_user_message",None)
+        out.append(item)
+    return out
+
+@app.get("/conversations/{conversation_id}/messages")
+async def conversation_messages(conversation_id:str,request:Request):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    with db() as c:
+        exists=c.execute("SELECT id FROM mirae_conversations WHERE id=%s AND user_id=%s",[conversation_id,u["id"]]).fetchone()
+        if not exists:raise HTTPException(404,"대화를 찾을 수 없습니다.")
+        rows=c.execute("""SELECT id,role,content,sources,attachments,created_at
+                          FROM mirae_chat_history
+                          WHERE user_id=%s AND conversation_id=%s
+                          ORDER BY created_at ASC,id ASC""",[u["id"],conversation_id]).fetchall()
     return rows
 
 @app.get("/conversations/search")
@@ -759,7 +791,7 @@ async def admin_overview(request:Request):
 @app.get("/admin/users")
 async def admin_users(request:Request):
     require_admin(request)
-    with db() as c:return c.execute("SELECT u.id,u.email,u.name,u.created_at,u.email_verified,(SELECT max(created_at) FROM mirae_access_logs l WHERE l.user_id=u.id) AS last_access FROM mirae_users u ORDER BY u.created_at DESC LIMIT 500").fetchall()
+    with db() as c:return c.execute("""SELECT u.id,u.email,u.name,u.created_at,u.email_verified,a.last_access,a.ip,a.country,a.region,a.city FROM mirae_users u LEFT JOIN LATERAL (SELECT created_at AS last_access,ip,country,region,city FROM mirae_access_logs l WHERE l.user_id=u.id ORDER BY created_at DESC LIMIT 1) a ON true ORDER BY u.created_at DESC LIMIT 500""").fetchall()
 @app.get("/admin/logs")
 async def admin_logs(request:Request,category:str="",limit:int=200):
     require_admin(request); limit=max(1,min(limit,500))
@@ -1104,7 +1136,11 @@ async def chat(req:ChatRequest,request:Request):
     cid=""
     if u:
         cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
-        if current_title_missing(u["id"],cid):await finalize_conversation(u["id"],cid,req.message)
+        if current_title_missing(u["id"],cid):
+            with db() as c:
+                c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",
+                          [make_conversation_title(req.message),cid,u["id"]]);c.commit()
+            asyncio.create_task(finalize_conversation(u["id"],cid,req.message))
         asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
     return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources,"conversation_id":cid,
             "reasoning_summary":("웹 검색 결과를 확인한 뒤 답변을 구성했습니다." if sources else "질문의 핵심을 파악하고 필요한 맥락을 반영해 답변을 구성했습니다.")}
