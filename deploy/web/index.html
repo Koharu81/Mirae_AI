@@ -167,14 +167,30 @@
   <div class="modal admin-modal">
     <div class="setting-head"><div><div class="eyebrow">ADMIN</div><h2>관리자 패널</h2></div><button class="icon" id="closeAdmin" aria-label="닫기"><i data-lucide="x"></i></button></div>
     <div class="admin-tabs">
-      <button class="admin-tab active" data-admin-page="overview">개요</button>
-      <button class="admin-tab" data-admin-page="users">사용자</button>
-      <button class="admin-tab" data-admin-page="logs">접속 로그</button>
-      <button class="admin-tab" data-admin-page="settings">서비스 설정</button>
+      <button class="admin-tab active" data-admin-page="overview"><i data-lucide="layout-dashboard"></i><span>개요</span></button>
+      <button class="admin-tab" data-admin-page="security"><i data-lucide="shield-alert"></i><span>보안</span></button>
+      <button class="admin-tab" data-admin-page="traffic"><i data-lucide="activity"></i><span>트래픽</span></button>
+      <button class="admin-tab" data-admin-page="users"><i data-lucide="users"></i><span>사용자</span></button>
+      <button class="admin-tab" data-admin-page="logs"><i data-lucide="scroll-text"></i><span>로그</span></button>
+      <button class="admin-tab" data-admin-page="settings"><i data-lucide="sliders-horizontal"></i><span>서비스</span></button>
     </div>
     <div class="admin-page" id="admin-overview"><div class="admin-stat-grid">
       <div class="admin-stat"><b id="adminUsersCount">0</b><span>전체 사용자</span></div><div class="admin-stat"><b id="adminSessionsCount">0</b><span>활성 세션</span></div><div class="admin-stat"><b id="adminAccessCount">0</b><span>24시간 접속</span></div><div class="admin-stat"><b id="adminRiskCount">0</b><span>위험 요청</span></div>
     </div></div>
+    <div class="admin-page hidden" id="admin-security-page">
+      <div class="admin-hero danger-hero"><div><span class="admin-kicker">SECURITY MONITOR</span><h3>DDoS 및 비정상 트래픽 감지</h3><p>짧은 시간에 요청이 집중되는 IP와 오류 폭증을 자동으로 탐지합니다. 탐지 자체는 차단이 아니라 관리자 알림과 분석을 위한 기능입니다.</p></div><div class="security-state" id="adminSecurityState">정상</div></div>
+      <div class="admin-stat-grid compact">
+        <div class="admin-stat"><b id="adminSuspiciousIps">0</b><span>의심 IP</span></div>
+        <div class="admin-stat"><b id="adminBurstCount">0</b><span>요청 폭주</span></div>
+        <div class="admin-stat"><b id="adminErrorRate">0%</b><span>오류 비율</span></div>
+        <div class="admin-stat"><b id="adminBlockedCount">0</b><span>429 응답</span></div>
+      </div>
+      <div class="admin-card"><div class="admin-card-head"><div><b>의심 트래픽</b><small>최근 15분 기준</small></div><button class="outline small" id="refreshAdminSecurity">새로고침</button></div><div id="adminThreats" class="threat-list"></div></div>
+    </div>
+    <div class="admin-page hidden" id="admin-traffic-page">
+      <div class="admin-card"><div class="admin-card-head"><div><b>실시간 서비스 상태</b><small>최근 접근 로그 기반 지표</small></div><button class="outline small" id="refreshAdminTraffic">새로고침</button></div><div class="traffic-grid" id="adminTraffic"></div></div>
+      <div class="admin-card"><div class="admin-card-head"><div><b>요청이 많은 경로</b><small>최근 24시간</small></div></div><div id="adminEndpoints" class="endpoint-list"></div></div>
+    </div>
     <div class="admin-page hidden" id="admin-users-page"><div class="admin-card"><b>사용자</b><div class="admin-table"><div class="admin-table-head"><span>이름</span><span>이메일</span><span>가입</span><span>인증</span></div><div id="adminUsers"></div></div></div></div>
     <div class="admin-page hidden" id="admin-logs-page"><div class="admin-card"><b>접속 및 위험 로그</b><div class="admin-log-list" id="adminLogs"></div></div></div>
     <div class="admin-page hidden" id="admin-settings-page"><div class="admin-card">
@@ -182,7 +198,9 @@
       <div class="setting-row"><div><b>이미지 생성</b><small>이미지 생성 기능의 사용 여부입니다.</small></div><input id="adminImageGeneration" type="checkbox"></div>
       <div class="setting-row"><div><b>점검 모드</b><small>서비스 점검 상태를 표시할 수 있습니다.</small></div><input id="adminMaintenance" type="checkbox"></div>
       <div class="setting-row"><div><b>로그 보관 기간</b><small>접속 로그 보관 일수입니다.</small></div><input id="adminRetention" type="number" min="1" max="3650"></div>
-      <button class="primary small" id="saveAdminSettings">저장</button>
+      <div class="setting-row"><div><b>보안 감지 민감도</b><small>요청 폭주 탐지 기준입니다.</small></div><select id="adminSecuritySensitivity"><option value="high">높음</option><option value="normal">보통</option><option value="low">낮음</option></select></div>
+      <div class="setting-row"><div><b>관리자 로그 기록</b><small>관리자 패널의 주요 작업을 접속 로그에 남깁니다.</small></div><input id="adminAuditEnabled" type="checkbox"></div>
+      <div class="admin-action-row"><button class="primary small" id="saveAdminSettings">설정 저장</button><button class="outline small" id="cleanupAdminLogs">오래된 로그 정리</button><button class="outline small" id="refreshAdminAll">전체 새로고침</button></div>
     </div></div>
     <div class="muted admin-status" id="adminStatus"></div>
   </div>

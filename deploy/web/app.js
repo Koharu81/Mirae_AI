@@ -104,7 +104,39 @@ async function loadAdminOverview(){
     $("#adminAccessCount").textContent=String(o.access_24h??0);
     $("#adminRiskCount").textContent=String((o.risks||[]).reduce((a,x)=>a+Number(x.count||0),0));
     renderAdminUsers(u);renderAdminLogs(l);fillAdminSettings(s);
+    await Promise.all([loadAdminSecurity(),loadAdminTraffic()]);
+    if(window.lucide)lucide.createIcons();
   }catch(e){$("#adminStatus").textContent=e.message||"관리자 정보를 불러오지 못했습니다."}
+}
+async function loadAdminSecurity(){
+  try{
+    const d=await req("/admin/security");
+    $("#adminSuspiciousIps").textContent=String(d.suspicious_ips||0);
+    $("#adminBurstCount").textContent=String(d.bursts||0);
+    $("#adminErrorRate").textContent=String(Number(d.error_rate||0).toFixed(1)+"%");
+    $("#adminBlockedCount").textContent=String(d.rate_limited||0);
+    $("#adminSecurityState").textContent=d.state==="alert"?"주의":"정상";
+    $("#adminSecurityState").classList.toggle("alert",d.state==="alert");
+    const box=$("#adminThreats");box.innerHTML="";
+    (d.threats||[]).forEach(x=>{
+      const row=document.createElement("div");row.className="threat-row";
+      row.innerHTML="<div><b>"+escapeHtml(x.ip||"알 수 없음")+"</b><small>"+escapeHtml(x.reason||"비정상 요청 패턴")+"</small></div><strong>"+Number(x.requests||0)+" 요청</strong>";
+      box.appendChild(row);
+    });
+    if(!box.children.length)box.innerHTML="<div class='empty-admin'>현재 탐지된 의심 트래픽이 없습니다.</div>";
+  }catch(e){$("#adminStatus").textContent=e.message||"보안 정보를 불러오지 못했습니다."}
+}
+async function loadAdminTraffic(){
+  try{
+    const d=await req("/admin/traffic");
+    const box=$("#adminTraffic");box.innerHTML="";
+    [["요청 수",d.requests],["평균 응답",String(d.avg_latency||0)+" ms"],["성공률",String(Number(d.success_rate||0).toFixed(1))+"%"],["서버 오류",d.server_errors]].forEach(([a,b])=>{
+      const x=document.createElement("div");x.className="traffic-card";x.innerHTML="<small>"+a+"</small><b>"+escapeHtml(String(b??0))+"</b>";box.appendChild(x);
+    });
+    const ep=$("#adminEndpoints");ep.innerHTML="";
+    (d.endpoints||[]).forEach(x=>{const row=document.createElement("div");row.className="endpoint-row";row.innerHTML="<span>"+escapeHtml(x.path||"")+"</span><b>"+Number(x.count||0)+"</b>";ep.appendChild(row)});
+    if(!ep.children.length)ep.innerHTML="<div class='empty-admin'>아직 요청 데이터가 없습니다.</div>";
+  }catch(e){$("#adminStatus").textContent=e.message||"트래픽 정보를 불러오지 못했습니다."}
 }
 function renderAdminUsers(list){
   const box=$("#adminUsers");box.innerHTML="";
@@ -129,6 +161,8 @@ function fillAdminSettings(s){
   $("#adminImageGeneration").checked=s.image_generation!==false;
   $("#adminMaintenance").checked=!!s.maintenance;
   $("#adminRetention").value=String(s.log_retention_days||90);
+  $("#adminSecuritySensitivity").value=s.security_sensitivity||"normal";
+  $("#adminAuditEnabled").checked=s.admin_audit_enabled!==false;
 }
 async function saveAdminSettings(){
   try{
@@ -136,10 +170,15 @@ async function saveAdminSettings(){
       web_search_mode:$("#adminWebSearchMode").value,
       image_generation:$("#adminImageGeneration").checked,
       maintenance:$("#adminMaintenance").checked,
-      log_retention_days:Number($("#adminRetention").value||90)
+      log_retention_days:Number($("#adminRetention").value||90),
+      security_sensitivity:$("#adminSecuritySensitivity").value,
+      admin_audit_enabled:$("#adminAuditEnabled").checked
     })});
     fillAdminSettings(d);$("#adminStatus").textContent="관리자 설정이 저장되었습니다.";
   }catch(e){$("#adminStatus").textContent=e.message||"설정을 저장하지 못했습니다."}
+}
+async function cleanupAdminLogs(){
+  try{const d=await req("/admin/cleanup-logs",{method:"POST"});$("#adminStatus").textContent="오래된 로그 "+String(d.deleted||0)+"개를 정리했습니다.";await loadAdminOverview()}catch(e){$("#adminStatus").textContent=e.message||"로그 정리에 실패했습니다."}
 }
 function setAvatar(el,name,url){
   el.textContent="";
@@ -727,6 +766,10 @@ document.querySelectorAll(".admin-tab").forEach(b=>b.onclick=()=>{
   if(b.dataset.adminPage==="overview")openAdminPanel();
 });
 $("#saveAdminSettings").onclick=saveAdminSettings;
+$("#cleanupAdminLogs").onclick=cleanupAdminLogs;
+$("#refreshAdminSecurity").onclick=loadAdminSecurity;
+$("#refreshAdminTraffic").onclick=loadAdminTraffic;
+$("#refreshAdminAll").onclick=loadAdminOverview;
 
 $("#developerApiKeys").onclick=()=>location.href="/api-keys";
 $("#developerApiDocs").onclick=()=>location.href="/api-docs";

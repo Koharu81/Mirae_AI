@@ -14,8 +14,21 @@ from psycopg.types.json import Jsonb
 from io import BytesIO
 import zipfile
 
-APP_VERSION="6.5.0"
+APP_VERSION="6.6.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
+_TRAFFIC={}
+def traffic_key(request:Request): return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+def traffic_snapshot():
+    now=time.time(); cutoff=now-900; out=[]
+    for ip,items in list(_TRAFFIC.items()):
+        fresh=[t for t in items if t>=cutoff]
+        if fresh:_TRAFFIC[ip]=fresh;out.append((ip,fresh))
+        else:_TRAFFIC.pop(ip,None)
+    return out
+def traffic_record(request:Request):
+    ip=traffic_key(request); now=time.time(); arr=_TRAFFIC.setdefault(ip,[]); arr.append(now)
+    _TRAFFIC[ip]=[t for t in arr if t>=now-900]
+    return ip,len(_TRAFFIC[ip])
 ADMIN_EMAIL="admin@koharu.live"
 def request_ip(request:Request): return (request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "") or "").strip()
 def request_location(request:Request): return {"city":request.headers.get("cf-ipcity","").strip(),"region":request.headers.get("cf-region","").strip(),"country":request.headers.get("cf-ipcountry","").strip()}
@@ -27,6 +40,7 @@ def require_admin(request:Request):
 @app.middleware("http")
 async def access_audit(request:Request,call_next):
     started=time.perf_counter(); response=None
+    ip,burst=traffic_record(request)
     try:
         response=await call_next(request); return response
     finally:
@@ -34,7 +48,9 @@ async def access_audit(request:Request,call_next):
             path=request.url.path; status=response.status_code if response else 500
             if path not in {"/health","/openapi.json","/docs","/redoc"}:
                 u=session_user(request); loc=request_location(request); risk="normal"
-                if status in {401,403}: risk="auth_failure" if path.startswith("/auth/") else "permission_denied"
+                recent=[t for t in _TRAFFIC.get(ip,[]) if t>=time.time()-60]
+                if len(recent)>=120: risk="traffic_burst"
+                elif status in {401,403}: risk="auth_failure" if path.startswith("/auth/") else "permission_denied"
                 elif status==429: risk="rate_limit"
                 elif status>=500: risk="server_error"
                 elif status>=400: risk="bad_request"
@@ -798,15 +814,49 @@ async def admin_logs(request:Request,category:str="",limit:int=200):
     with db() as c:
         if category:return c.execute("SELECT id,email,nickname,ip,country,region,city,path,method,status,risk_category,risk_detail,user_agent,latency_ms,created_at FROM mirae_access_logs WHERE risk_category=%s ORDER BY created_at DESC LIMIT %s",[category,limit]).fetchall()
         return c.execute("SELECT id,email,nickname,ip,country,region,city,path,method,status,risk_category,risk_detail,user_agent,latency_ms,created_at FROM mirae_access_logs ORDER BY created_at DESC LIMIT %s",[limit]).fetchall()
+@app.get("/admin/security")
+async def admin_security(request:Request):
+    require_admin(request)
+    now=time.time(); threats=[]
+    for ip,items in traffic_snapshot():
+        recent=[t for t in items if t>=now-60]
+        if len(recent)>=60: threats.append({"ip":ip,"requests":len(recent),"reason":"최근 1분 요청 폭주"})
+        elif len(items)>=240: threats.append({"ip":ip,"requests":len(items),"reason":"최근 15분 누적 요청 급증"})
+    with db() as c:
+        total=c.execute("SELECT COUNT(*) AS n FROM mirae_access_logs WHERE created_at>=now()-interval '15 minutes'").fetchone()["n"]
+        errors=c.execute("SELECT COUNT(*) AS n FROM mirae_access_logs WHERE created_at>=now()-interval '15 minutes' AND status>=400").fetchone()["n"]
+        limited=c.execute("SELECT COUNT(*) AS n FROM mirae_access_logs WHERE created_at>=now()-interval '15 minutes' AND status=429").fetchone()["n"]
+    return {"state":"alert" if threats or (total and errors/total>=0.2) else "normal","suspicious_ips":len(threats),"bursts":len(threats),"error_rate":(errors/total*100 if total else 0),"rate_limited":limited,"threats":threats[:100]}
+
+@app.get("/admin/traffic")
+async def admin_traffic(request:Request):
+    require_admin(request)
+    with db() as c:
+        stats=c.execute("""SELECT COUNT(*) AS requests,COALESCE(AVG(latency_ms),0) AS avg_latency,COALESCE(AVG(CASE WHEN status<400 THEN 1.0 ELSE 0.0 END)*100,100) AS success_rate,COUNT(*) FILTER(WHERE status>=500) AS server_errors FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours'""").fetchone()
+        endpoints=c.execute("""SELECT path,COUNT(*) AS count FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours' GROUP BY path ORDER BY count DESC LIMIT 20""").fetchall()
+    return {**dict(stats),"endpoints":endpoints}
+
+@app.post("/admin/cleanup-logs")
+async def admin_cleanup_logs(request:Request):
+    require_admin(request)
+    with db() as c:
+        row=c.execute("SELECT value FROM mirae_admin_settings WHERE key='log_retention_days'").fetchone()
+        raw=row["value"] if row else 90
+        try: days=int(raw.get("value",raw) if isinstance(raw,dict) else raw)
+        except Exception: days=90
+        days=max(1,min(days,3650))
+        r=c.execute("DELETE FROM mirae_access_logs WHERE created_at<now()-(%s::text||' days')::interval",[days]); c.commit()
+    return {"ok":True,"deleted":r.rowcount,"retention_days":days}
+
 @app.get("/admin/settings")
 async def admin_settings(request:Request):
-    require_admin(request); defaults={"web_search_mode":"broad","image_generation":True,"maintenance":False,"log_retention_days":90}
+    require_admin(request); defaults={"web_search_mode":"broad","image_generation":True,"maintenance":False,"log_retention_days":90,"security_sensitivity":"normal","admin_audit_enabled":True}
     with db() as c:
         for r in c.execute("SELECT key,value FROM mirae_admin_settings ORDER BY key").fetchall(): defaults[r["key"]]=r["value"]
     return defaults
 @app.put("/admin/settings")
 async def admin_settings_update(data:dict[str,Any],request:Request):
-    require_admin(request); allowed={"web_search_mode","image_generation","maintenance","log_retention_days"}
+    require_admin(request); allowed={"web_search_mode","image_generation","maintenance","log_retention_days","security_sensitivity","admin_audit_enabled"}
     with db() as c:
         for k,v in data.items():
             if k in allowed:c.execute("""INSERT INTO mirae_admin_settings(key,value,updated_at) VALUES (%s,%s,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()""",[k,Jsonb(v)])
