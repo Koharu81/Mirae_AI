@@ -1128,6 +1128,15 @@ async def generate_stream(msgs,temp,max_tokens):
     async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
         async with x.stream("POST",MODEL_API_URL,headers=model_headers(),json={"model":active_model_name(),"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":True}) as r:
             if r.status_code>=400:raise RuntimeError((await r.aread()).decode(errors="ignore")[:500])
+            content_type=(r.headers.get("content-type") or "").lower()
+            if "text/event-stream" not in content_type:
+                raw=await r.aread()
+                try:o=json.loads(raw)
+                except Exception as e:raise RuntimeError("AI ??? ???? ?? ??? ?? ? ????.") from e
+                content=((o.get("choices") or [{}])[0].get("message") or {}).get("content","")
+                if isinstance(content,list):content="".join(str(x.get("text",x)) for x in content if isinstance(x,dict))
+                if content:yield str(content)
+                return
             async for line in r.aiter_lines():
                 if not line.startswith("data:"):continue
                 raw=line[5:].strip()
@@ -1140,7 +1149,7 @@ async def generate_stream(msgs,temp,max_tokens):
 
 def event(name,data):return f"event: {name}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n"
 
-async def prepare(req,request):
+async def prepare(req,request,skip_search=False):
     u=session_user(request);sources=[];need=bool(req.web_search) and wants_web(req.message);skill_list=[];memories=[];profile_data={}
     if u:
         with db() as c:
@@ -1148,7 +1157,7 @@ async def prepare(req,request):
             skill_list=c.execute("SELECT id,name,description FROM mirae_skills WHERE user_id=%s AND active=true ORDER BY name",[u["id"]]).fetchall()
             memories=c.execute("SELECT id,content FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 20",[u["id"]]).fetchall()
             profile_data=user_row or {}
-    if need:
+    if need and not skip_search:
         try:sources=await search_web(req.message)
         except Exception:sources=[]
     msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list,memories,profile_data,req.attachments)}]
@@ -1214,9 +1223,22 @@ async def chat_stream(req:ChatRequest,request:Request):
                 yield event("done",{"model":"skill","sources":[],"conversation_id":cid})
                 return
             yield event("stage",{"id":"analyze","label":"질문 분석 중"})
-            u,sources,msgs,need=await prepare(req,request)
+            u,sources,msgs,need=await prepare(req,request,skip_search=True)
             if need:
-                yield event("stage",{"id":"search","label":"관련 정보 확인 중"})
+                query=clean_query(req.message)
+                yield event("stage",{"id":"search","label":"웹 검색 중"})
+                yield event("search_query",{"query":query})
+                try:sources=await search_web(req.message)
+                except Exception:sources=[]
+                msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,[],[],{},req.attachments)}]
+                if u:
+                    with db() as c:
+                        skill_list=c.execute("SELECT id,name,description FROM mirae_skills WHERE user_id=%s AND active=true ORDER BY name",[u["id"]]).fetchall()
+                        memories=c.execute("SELECT id,content FROM mirae_memories WHERE user_id=%s ORDER BY updated_at DESC LIMIT 20",[u["id"]]).fetchall()
+                        profile_data=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[u["id"]]).fetchone() or {}
+                    msgs=[{"role":"system","content":system_prompt(req,lang(req.message),sources,skill_list,memories,profile_data,req.attachments)}]
+                msgs += [{"role":m.role,"content":m.content[:5000]} for m in req.history[-12:] if m.role in ("user","assistant") and m.content.strip()]
+                msgs.append({"role":"user","content":req.message})
                 yield event("sources",{"sources":sources})
             yield event("stage",{"id":"generate","label":"답변 생성 중"});chunks=[]
             try:

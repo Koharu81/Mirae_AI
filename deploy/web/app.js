@@ -647,7 +647,8 @@ async function streamAsk(text,box){
     if(!data)return;
     let obj;try{obj=JSON.parse(data)}catch{return}
     if(ev==="stage"){stage(box,obj.label||"처리 중");}
-    else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length)renderSources(box.e,state.sources)}
+    else if(ev==="search_query"){const q=String(obj.query||"").trim();if(q)addProcessLog(box,"Web search: "+q)}
+    else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"Web search complete: "+state.sources.length+" results");renderSources(box.e,state.sources)}}
     else if(ev==="conversation"){state.conversation_id=obj.id||state.conversation_id;state.title=obj.title||state.title;currentTitle=state.title;$("#title").textContent=state.title}
     else if(ev==="delta"){box.raw=(box.raw||"")+(obj.text||"");box.bubble.textContent=box.raw;box.e.scrollIntoView({behavior:"auto",block:"end"})}
     else if(ev==="error")throw Error(obj.message||"답변 생성 중 오류가 발생했습니다.");
