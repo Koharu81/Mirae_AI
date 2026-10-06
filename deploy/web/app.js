@@ -515,7 +515,8 @@ function restoreServer(rows,convs=[]){
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
-  const q=String($("#conversationSearch")?.value||"").trim().toLowerCase();
+  const search=$("#conversationSearch");
+  const q=String(search?.value||"").trim().toLowerCase();
   let list=chats.filter(c=>!q||String(c.title||"").toLowerCase().includes(q)||c.messages.some(m=>String(m.content||"").toLowerCase().includes(q)));
   const favorites=list.filter(c=>c.favorite);
   const folders={};list.filter(c=>!c.favorite&&c.folder_id).forEach(c=>(folders[c.folder_id]??=[]).push(c));
@@ -661,7 +662,18 @@ async function streamAsk(text,box){
     for(const part of parts)consume(part);
   }
   if(buffer.trim())consume(buffer);
-  if(!box.raw)throw Error("AI 서버가 답변을 반환하지 않았습니다.");
+  if(!box.raw){
+    addProcessLog(box,"???? ??? ?? ?? API ???? ???");
+    const fallback=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const fd=await fallback.json().catch(()=>({}));
+    if(!fallback.ok)throw Error(fd.detail||"AI ??? ??? ???? ?????.");
+    if(fd.sources?.length){state.sources=fd.sources;renderSources(box.e,fd.sources)}
+    if(fd.conversation_id)state.conversation_id=fd.conversation_id;
+    if(fd.title){state.title=fd.title;currentTitle=fd.title;$("#title").textContent=fd.title}
+    box.raw=String(fd.reply||"");
+    if(box.raw)box.bubble.textContent=box.raw;
+  }
+  if(!box.raw)throw Error("AI ??? ??? ???? ?????.");
   finish(box);
   return {reply:box.raw,sources:state.sources,conversation_id:state.conversation_id,title:state.title};
 }
@@ -948,7 +960,16 @@ $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.
 $("#newChat").onclick=()=>newChat();$("#mobileNew").onclick=()=>newChat();$("#mobileMenu").onclick=()=>$("#sidebar").classList.toggle("open");
 $("#newFolder").onclick=createConversationFolder;
 let historySearchTimer=null;
-$("#conversationSearch").oninput=()=>{clearTimeout(historySearchTimer);historySearchTimer=setTimeout(renderHistory,80)};
+const conversationSearch=$("#conversationSearch");
+if(conversationSearch){
+  conversationSearch.value="";
+  conversationSearch.dataset.userInput="";
+  conversationSearch.oninput=e=>{
+    e.target.dataset.userInput=e.target.value.trim()?"1":"";
+    clearTimeout(historySearchTimer);
+    historySearchTimer=setTimeout(renderHistory,80);
+  };
+}
 function closeSidebar(){$("#sidebar").classList.remove("open")}
 $("#chat").onclick=closeSidebar;
 const mq=matchMedia("(prefers-color-scheme:dark)");if(mq.addEventListener)mq.addEventListener("change",()=>{if(settings.theme==="system")applyTheme()});
