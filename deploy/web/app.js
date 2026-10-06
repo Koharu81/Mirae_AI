@@ -624,59 +624,20 @@ function parseSSEBlock(block,box,state){
 }
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:1400,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
-  const imageIntent=/(이미지|그림|일러스트|사진|포스터|아이콘|로고).*(만들|생성|그려|제작)|(만들|생성|그려|제작).*(이미지|그림|일러스트|사진|포스터|아이콘|로고)/i.test(text);
-  if(imageIntent){
-    const r=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw Error(d.detail||"AI API 요청에 실패했습니다.");
-    if(d.image?.url){
-      box.raw="";
-      box.bubble.innerHTML="<div class='generated-image'><img src='"+escapeHtml(d.image.url)+"' alt='생성 이미지' loading='lazy'><a href='"+escapeHtml(d.image.url)+"' target='_blank' rel='noopener noreferrer'>이미지 열기</a></div>";
-      if(d.conversation_id)currentId=d.conversation_id;finish(box);
-      return {reply:d.reply||"이미지를 생성했습니다.",sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
-    }
-    return {reply:d.reply||"",sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
-  }
-  stage(box,"답변 생성 중");
-  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
-  if(!r.ok)throw Error("AI API 요청에 실패했습니다.");
-  if(!r.body)throw Error("스트리밍 응답을 사용할 수 없습니다.");
-  const reader=r.body.getReader(),decoder=new TextDecoder();let buffer="",state={conversation_id:currentId,title:currentTitle,sources:[]};
-  const consume=block=>{
-    let ev="message",data="";
-    block.replace(String.fromCharCode(13),"").split(String.fromCharCode(10)).forEach(line=>{if(line.startsWith("event:"))ev=line.slice(6).trim();else if(line.startsWith("data:"))data+=(data?String.fromCharCode(10):"")+line.slice(5).trim()});
-    if(!data)return;
-    let obj;try{obj=JSON.parse(data)}catch{return}
-    if(ev==="stage"){stage(box,obj.label||"처리 중");}
-    else if(ev==="search_query"){const q=String(obj.query||"").trim();if(q)addProcessLog(box,"Web search: "+q)}
-    else if(ev==="sources"){state.sources=obj.sources||[];if(state.sources.length){addProcessLog(box,"Web search complete: "+state.sources.length+" results");renderSources(box.e,state.sources)}}
-    else if(ev==="conversation"){state.conversation_id=obj.id||state.conversation_id;state.title=obj.title||state.title;currentTitle=state.title;$("#title").textContent=state.title}
-    else if(ev==="delta"){box.raw=(box.raw||"")+(obj.text||"");box.bubble.textContent=box.raw;box.e.scrollIntoView({behavior:"auto",block:"end"})}
-    else if(ev==="error")throw Error(obj.message||"답변 생성 중 오류가 발생했습니다.");
-    else if(ev==="done"){state.done=true;if(obj.conversation_id)state.conversation_id=obj.conversation_id}
-  };
-  while(true){
-    const {value,done}=await reader.read();if(done)break;
-    buffer+=decoder.decode(value,{stream:true});
-    const parts=buffer.split(String.fromCharCode(10)+String.fromCharCode(10));buffer=parts.pop()||"";
-    for(const part of parts)consume(part);
-  }
-  if(buffer.trim())consume(buffer);
-  if(!box.raw){
-    addProcessLog(box,"???? ??? ?? ?? API ???? ???");
-    const fallback=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const fd=await fallback.json().catch(()=>({}));
-    if(!fallback.ok)throw Error(fd.detail||"AI ??? ??? ???? ?????.");
-    if(fd.sources?.length){state.sources=fd.sources;renderSources(box.e,fd.sources)}
-    if(fd.conversation_id)state.conversation_id=fd.conversation_id;
-    if(fd.title){state.title=fd.title;currentTitle=fd.title;$("#title").textContent=fd.title}
-    box.raw=String(fd.reply||"");
-    if(box.raw)box.bubble.textContent=box.raw;
-  }
+  stage(box,"?? ?? ?");
+  const r=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw Error(d.detail||"AI API ??? ??????.");
+  if(d.sources?.length){renderSources(box.e,d.sources)}
+  if(d.conversation_id){currentId=d.conversation_id}
+  if(d.title){currentTitle=d.title;$("#title").textContent=d.title}
+  box.raw=String(d.reply||"");
   if(!box.raw)throw Error("AI ??? ??? ???? ?????.");
+  box.bubble.textContent=box.raw;
   finish(box);
-  return {reply:box.raw,sources:state.sources,conversation_id:state.conversation_id,title:state.title};
+  return {reply:box.raw,sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
 }
+
 async function generateImage(prompt){
   const clean=String(prompt||"").replace(/^(?:이미지|그림)\s*(?:생성|그려|만들어)?\s*[:：-]?\s*/i,"").trim();
   if(!clean)return;
