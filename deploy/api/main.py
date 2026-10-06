@@ -1194,13 +1194,22 @@ async def chat(req:ChatRequest,request:Request):
     reply=await generate_once(msgs,req.temperature,req.max_tokens)
     cid=""
     if u:
-        cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
-        if current_title_missing(u["id"],cid):
-            with db() as c:
-                c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",
-                          [make_conversation_title(req.message),cid,u["id"]]);c.commit()
-            asyncio.create_task(finalize_conversation(u["id"],cid,req.message))
-        asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
+        try:
+            cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
+        except Exception as e:
+            print(f"CHAT_SAVE_ERROR: {type(e).__name__}: {str(e)[:500]}",flush=True)
+            cid=req.conversation_id or ""
+        if cid:
+            try:
+                if current_title_missing(u["id"],cid):
+                    with db() as c:
+                        c.execute("UPDATE mirae_conversations SET title=%s,updated_at=now() WHERE id=%s AND user_id=%s",
+                                  [make_conversation_title(req.message),cid,u["id"]]);c.commit()
+                    asyncio.create_task(finalize_conversation(u["id"],cid,req.message))
+            except Exception as e:
+                print(f"CHAT_TITLE_ERROR: {type(e).__name__}: {str(e)[:500]}",flush=True)
+        try: asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
+        except Exception: pass
     return {"reply":reply,"model":MODEL_NAME,"language":lang(req.message),"sources":sources,"conversation_id":cid,
             "reasoning_summary":("웹 검색 결과를 확인한 뒤 답변을 구성했습니다." if sources else "질문의 핵심을 파악하고 필요한 맥락을 반영해 답변을 구성했습니다.")}
 

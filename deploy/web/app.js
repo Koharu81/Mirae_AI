@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s);
-const API=location.hostname==="mirae.koharu.live"?"https://api.koharu.live":"/api";
+const API="/api";
 let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
@@ -56,7 +56,17 @@ async function renderSharedConversation(code){
   }catch(e){document.body.innerHTML='<main class="shared-page"><div class="shared-card"><h1>공유 대화를 찾을 수 없습니다.</h1><p>링크가 잘못되었거나 더 이상 존재하지 않습니다.</p><a href="/">Mirae AI로 이동</a></div></main>'}
 }
 async function boot(){
-  if($("#conversationSearch"))$("#conversationSearch").value="";
+  const conversationSearch=$("#conversationSearch");
+if(conversationSearch){
+  conversationSearch.value="";
+  conversationSearch.defaultValue="";
+  conversationSearch.setAttribute("autocomplete","new-password");
+  conversationSearch.setAttribute("name","mirae_conversation_query");
+  conversationSearch.oninput=()=>{
+    clearTimeout(historySearchTimer);
+    historySearchTimer=setTimeout(renderHistory,80);
+  };
+}
   const shareMatch=location.pathname.match(/^\/share\/([A-Za-z]{8})\/?$/);
   if(shareMatch){await renderSharedConversation(shareMatch[1]);return}
   fillSettings();renderHistory();newChat(false);setupTools();
