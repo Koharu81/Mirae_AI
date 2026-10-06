@@ -1184,7 +1184,7 @@ async def chat(req:ChatRequest,request:Request):
         else:cid=""
         return {"reply":reply,"model":"skill","language":lang(req.message),"sources":[]}
     u,sources,msgs,need=await prepare(req,request)
-    image_intent=await classify_image_intent(req.message)
+    image_intent=classify_image_intent(req.message)
     if image_intent["generate"]:
         image=await generate_image_payload(image_intent["prompt"]); reply="이미지를 생성했습니다."; cid=""
         if u:
