@@ -62,6 +62,7 @@ if(conversationSearch){
   conversationSearch.defaultValue="";
   conversationSearch.setAttribute("autocomplete","new-password");
   conversationSearch.setAttribute("name","mirae_conversation_query");
+  conversationSearch.addEventListener("focus",()=>{conversationSearch.removeAttribute("readonly");},{once:true});
   conversationSearch.oninput=()=>{
     clearTimeout(historySearchTimer);
     historySearchTimer=setTimeout(renderHistory,80);
@@ -931,16 +932,7 @@ $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.
 $("#newChat").onclick=()=>newChat();$("#mobileNew").onclick=()=>newChat();$("#mobileMenu").onclick=()=>$("#sidebar").classList.toggle("open");
 $("#newFolder").onclick=createConversationFolder;
 let historySearchTimer=null;
-const conversationSearch=$("#conversationSearch");
-if(conversationSearch){
-  conversationSearch.value="";
-  conversationSearch.dataset.userInput="";
-  conversationSearch.oninput=e=>{
-    e.target.dataset.userInput=e.target.value.trim()?"1":"";
-    clearTimeout(historySearchTimer);
-    historySearchTimer=setTimeout(renderHistory,80);
-  };
-}
+
 function closeSidebar(){$("#sidebar").classList.remove("open")}
 $("#chat").onclick=closeSidebar;
 const mq=matchMedia("(prefers-color-scheme:dark)");if(mq.addEventListener)mq.addEventListener("change",()=>{if(settings.theme==="system")applyTheme()});
