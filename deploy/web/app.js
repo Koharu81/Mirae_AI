@@ -1,5 +1,6 @@
 const $=s=>document.querySelector(s);
 const API="/api";
+const MIRAE_LOGO="/mirae-logo.png";
 let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
@@ -91,8 +92,8 @@ async function loadHistory(){
 function setAccountLabel(){
   if($("#accountName"))$("#accountName").textContent=user?(profile.name||user.name):"계정";
   if($("#userInfo"))$("#userInfo").textContent=user?(profile.name||user.name)+" · "+user.email:"로그인하지 않음";
-  if($("#accountAvatar"))setAvatar($("#accountAvatar"),profile.name||user?.name||"M",profile.avatar_url||"");
-  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),profile.name||user?.name||"M",profile.avatar_url||"");
+  if($("#accountAvatar"))setAvatar($("#accountAvatar"),profile.name||user?.name||"M",MIRAE_LOGO);
+  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),profile.name||user?.name||"M",MIRAE_LOGO);
   syncAdminButton();
 }
 function syncAdminButton(){
@@ -413,7 +414,7 @@ function add(role,text,sources=[],feedbackKey="",messageAttachments=[]){
   const name=role==="user"?(profile.name||user?.name||"나"):"Mirae";
   e.innerHTML='<div class="msg-id"><div class="avatar"></div><b class="msg-name">'+escapeHtml(name)+'</b></div><div class="wrap"><div class="bubble"></div></div>';
   const avatar=e.querySelector(".avatar");
-  if(role==="user")setAvatar(avatar,name,profile.avatar_url||"");else avatar.textContent="M";
+  if(role==="user")setAvatar(avatar,name,MIRAE_LOGO);else avatar.innerHTML="<img src=\""+MIRAE_LOGO+"\" alt=\"Mirae\" loading=\"lazy\">";
   if(role==="assistant")renderBubble(e.querySelector(".bubble"),text);else e.querySelector(".bubble").textContent=text;
   if(role==="assistant"&&sources.length)renderSources(e,sources);
   if(role==="user"&&messageAttachments.length)renderMessageAttachments(e,messageAttachments);
@@ -635,18 +636,16 @@ function parseSSEBlock(block,box,state){
 }
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:1400,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
-  stage(box,"답변 생성 중");
-  const r=await fetch(API+"/chat",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw Error(d.detail||"AI API 요청에 실패했습니다.");
-  if(d.sources?.length){renderSources(box.e,d.sources)}
-  if(d.conversation_id){currentId=d.conversation_id}
-  if(d.title){currentTitle=d.title;$("#title").textContent=d.title}
-  box.raw=String(d.reply||"");
+  stage(box,"질문 분석");
+  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
+  if(!r.ok)throw Error(await r.text().catch(()=>"AI API 요청에 실패했습니다."));
+  if(!r.body)throw Error("스트리밍 응답을 받을 수 없습니다.");
+  const reader=r.body.getReader(),decoder=new TextDecoder();let buffer="",state={done:false,sources:[],conversation_id:"",title:currentTitle};
+  while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let parts=buffer.split(/\n\n/);buffer=parts.pop()||"";for(const part of parts)parseSSEBlock(part,box,state)}
+  if(buffer.trim())parseSSEBlock(buffer,box,state);
+  if(!state.done)finish(box);
   if(!box.raw)throw Error("AI 서버가 답변을 반환하지 않았습니다.");
-  box.bubble.textContent=box.raw;
-  finish(box);
-  return {reply:box.raw,sources:d.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
+  return {reply:box.raw,sources:state.sources||[],conversation_id:state.conversation_id||currentId,title:state.title||currentTitle};
 }
 
 async function generateImage(prompt){

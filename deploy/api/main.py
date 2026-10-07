@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from io import BytesIO
 import zipfile
 
-APP_VERSION="6.6.0"
+APP_VERSION="6.7.0"
 app=FastAPI(title="Mirae AI API",version=APP_VERSION,openapi_url=None,docs_url=None,redoc_url=None)
 _TRAFFIC={}
 def traffic_key(request:Request): return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
@@ -74,9 +74,9 @@ HF_TOKEN=os.getenv("HF_TOKEN","")
 HF_MODEL_RAW=os.getenv("HF_MODEL","").strip()
 UNSUPPORTED_MODELS={"Qwen/Qwen2.5-7B-Instruct","Qwen/Qwen2.5-7B-Instruct:fastest","Qwen/Qwen2.5-7B-Instruct:auto"}
 HF_MODEL=HF_MODEL_RAW if HF_MODEL_RAW and HF_MODEL_RAW not in UNSUPPORTED_MODELS else "openai/gpt-oss-120b:groq"
-MODEL_API_URL=os.getenv("MODEL_API_URL","").strip()
+MODEL_API_URL=os.getenv("MODEL_API_URL","http://model-runner.docker.internal:12434/engines/v1/chat/completions").strip()
 MODEL_API_KEY=os.getenv("MODEL_API_KEY","").strip()
-MODEL_NAME=os.getenv("MODEL_NAME","Mirae-Qwen2.5-1.5B-Instruct").strip() or "Mirae-Qwen2.5-1.5B-Instruct"
+MODEL_NAME=os.getenv("MODEL_NAME","hf.co/Qwen/Qwen2.5-3B-Instruct").strip() or "hf.co/Qwen/Qwen2.5-3B-Instruct"
 NEWS_RSS="https://news.google.com/rss/search"
 RESEND_API_KEY=os.getenv("RESEND_API_KEY","")
 RESEND_FROM=os.getenv("RESEND_FROM","admin@koharu.live")
@@ -92,6 +92,12 @@ WEB_EXPLICIT=re.compile(r"(웹\s*검색|인터넷(?:에서)?|검색(?:해|해줘
 WEB_FRESH=re.compile(r"(최신|현재|지금|최근|실시간|오늘|어제|내일|이번\s*(?:주|달)|업데이트|속보|새로\s*나온)",re.I)
 WEB_CONTEXT=re.compile(r"(뉴스|소식|정보|날씨|가격|환율|주가|시세|일정|출시|버전|패치|업데이트|사건|공지|공식|순위|경기|결과|상태|영업|운영시간)",re.I)
 GREETING_ONLY=re.compile(r"^\s*(안녕(?:하세요)?|하이|ㅎㅇ|hello|hi|hey|반가워|좋은\s*(?:아침|저녁)|잘\s*지내)\s*[!?.~]*\s*$",re.I)
+WEB_AUTO_SIGNAL=re.compile(r"(뭐야|무엇|알려줘|설명해줘|비교해줘|추천해줘|어디|언제|누가|얼마|어떻게|찾아줘|확인해줘|알아봐|정보|자료)",re.I)
+def auto_web_needed(text):
+    text=str(text or "").strip()
+    if not text or GREETING_ONLY.search(text): return False
+    if WEB_FRESH.search(text): return True
+    return bool(WEB_CONTEXT.search(text) and WEB_AUTO_SIGNAL.search(text))
 
 def db():
     if not DATABASE_URL: raise HTTPException(503,"DATABASE_URL is not configured.")
@@ -1110,8 +1116,8 @@ def active_model_name():
 async def generate_once(msgs,temp,max_tokens):
     if not MODEL_API_URL:raise HTTPException(503,"MODEL_API_URL is not configured on the API server.")
     try:
-        async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
-            r=await x.post(MODEL_API_URL,headers=model_headers(),json={"model":active_model_name(),"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":False})
+        async with httpx.AsyncClient(timeout=90,trust_env=False) as x:
+            r=await x.post(MODEL_API_URL,headers=model_headers(),json={"model":active_model_name(),"messages":msgs,"temperature":temp,"max_tokens":min(int(max_tokens),1400),"stream":False})
     except Exception as e:
         raise HTTPException(502,f"AI 서버에 연결하지 못했습니다: {type(e).__name__}: {str(e)[:300]}")
     if r.status_code>=400:raise HTTPException(502,f"AI 서버 요청이 실패했습니다: {r.text[:500]}")
@@ -1125,8 +1131,8 @@ async def generate_once(msgs,temp,max_tokens):
 
 async def generate_stream(msgs,temp,max_tokens):
     if not MODEL_API_URL:raise RuntimeError("MODEL_API_URL is not configured on the API server.")
-    async with httpx.AsyncClient(timeout=180,trust_env=False) as x:
-        async with x.stream("POST",MODEL_API_URL,headers=model_headers(),json={"model":active_model_name(),"messages":msgs,"temperature":temp,"max_tokens":max_tokens,"stream":True}) as r:
+    async with httpx.AsyncClient(timeout=90,trust_env=False) as x:
+        async with x.stream("POST",MODEL_API_URL,headers=model_headers(),json={"model":active_model_name(),"messages":msgs,"temperature":temp,"max_tokens":min(int(max_tokens),1400),"stream":True}) as r:
             if r.status_code>=400:raise RuntimeError((await r.aread()).decode(errors="ignore")[:500])
             content_type=(r.headers.get("content-type") or "").lower()
             if "text/event-stream" not in content_type:
@@ -1150,7 +1156,7 @@ async def generate_stream(msgs,temp,max_tokens):
 def event(name,data):return f"event: {name}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n"
 
 async def prepare(req,request,skip_search=False):
-    u=session_user(request);sources=[];need=bool(req.web_search) and wants_web(req.message);skill_list=[];memories=[];profile_data={}
+    u=session_user(request);sources=[];need=wants_web(req.message) or auto_web_needed(req.message);skill_list=[];memories=[];profile_data={}
     if u:
         with db() as c:
             user_row=c.execute("SELECT name,bio,birth_date FROM mirae_users WHERE id=%s",[u["id"]]).fetchone()
@@ -1258,13 +1264,14 @@ async def chat_stream(req:ChatRequest,request:Request):
             reply="".join(chunks).strip()
             cid=""
             if u:
-                cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
-                is_first=(current_title_missing(u["id"],cid))
-                if is_first:
-                    yield event("stage",{"id":"title","label":"대화 제목 정리 중"})
-                    await finalize_conversation(u["id"],cid,req.message)
-                    with db() as c:title_row=c.execute("SELECT title FROM mirae_conversations WHERE id=%s",[cid]).fetchone()
-                    yield event("conversation",{"id":cid,"title":title_row["title"] if title_row else "새 대화"})
+                try:
+                    cid=save_chat(u["id"],req.message,reply,"web" if sources else "model",sources,req.conversation_id or "",[a.model_dump() for a in req.attachments])
+                except Exception as e:
+                    print(f"STREAM_CHAT_SAVE_ERROR: {type(e).__name__}: {str(e)[:500]}",flush=True)
+                    cid=req.conversation_id or ""
+                if cid and current_title_missing(u["id"],cid):
+                    asyncio.create_task(finalize_conversation(u["id"],cid,req.message))
+                    yield event("conversation",{"id":cid,"title":make_conversation_title(req.message)})
             if u:asyncio.create_task(asyncio.to_thread(auto_register_memory,u["id"],req.message))
             yield event("done",{"model":MODEL_NAME,"sources":sources,"conversation_id":cid})
         except HTTPException as e:yield event("error",{"message":e.detail})
@@ -1355,18 +1362,34 @@ async def openai_chat(req:dict[str,Any],request:Request,authorization:str|None=H
     key=authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
     with db() as c:k=c.execute("SELECT * FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(key)]).fetchone() if key else None
     if not k:raise HTTPException(401,"Invalid or missing API key.")
-    msgs=req.get("messages") or [];last=next((m.get("content","") for m in reversed(msgs) if m.get("role")=="user"),"");sources=[]
+    msgs=req.get("messages") or []
+    last=next((m.get("content","") for m in reversed(msgs) if m.get("role")=="user"),"")
+    if isinstance(last,list): last=" ".join(str(x.get("text","")) for x in last if isinstance(x,dict))
+    image_intent=classify_image_intent(str(last))
+    if image_intent["generate"]:
+        image=await generate_image_payload(image_intent["prompt"])
+        return {"id":"mirae-image","object":"chat.completion","created":int(time.time()),"model":CLOUDFLARE_IMAGE_MODEL,"choices":[{"index":0,"message":{"role":"assistant","content":"이미지를 생성했습니다."},"finish_reason":"stop"}],"images":[image],"sources":[]}
+    sources=[]
     try:
-        if wants_web(last):sources=await search_web(last)
-    except Exception:pass
-    prompt=[{"role":"system","content":system_prompt(ChatRequest(message=last),lang(last),sources,[])}]+[m for m in msgs if m.get("role") in ("system","user","assistant")]
-    reply=await generate_once(prompt,float(req.get("temperature",.7)),min(int(req.get("max_tokens",2200)),3200))
+        if wants_web(str(last)) or auto_web_needed(str(last)): sources=await search_web(str(last))
+    except Exception: pass
+    req_model=str(req.get("model") or MODEL_NAME)
+    prompt=[{"role":"system","content":system_prompt(ChatRequest(message=str(last)),lang(str(last)),sources,[])}]+[m for m in msgs if m.get("role") in ("system","user","assistant")]
+    reply=await generate_once(prompt,float(req.get("temperature",.7)),min(int(req.get("max_tokens",1200)),1400))
     latency=int((time.perf_counter()-started)*1000)
     with db() as c:
         c.execute("UPDATE mirae_api_keys SET last_used_at=now() WHERE id=%s",[k["id"]])
         c.execute("INSERT INTO mirae_api_usage(key_id,user_id,path,status,latency_ms) VALUES (%s,%s,%s,%s,%s)",[k["id"],k["user_id"],"/v1/chat/completions",200,latency]);c.commit()
-    await dispatch_webhook(k["user_id"],"api.request",{"path":"/v1/chat/completions","model":req.get("model","mirae-free"),"latency_ms":latency})
-    return {"id":"mirae-chat","object":"chat.completion","created":int(time.time()),"model":req.get("model","mirae-free"),"choices":[{"index":0,"message":{"role":"assistant","content":reply},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"sources":sources}
+    await dispatch_webhook(k["user_id"],"api.request",{"path":"/v1/chat/completions","model":req_model,"latency_ms":latency})
+    return {"id":"mirae-chat","object":"chat.completion","created":int(time.time()),"model":MODEL_NAME,"choices":[{"index":0,"message":{"role":"assistant","content":reply},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"sources":sources}
+
+@app.post("/v1/images/generations")
+async def openai_image_generation(req:dict[str,Any],request:Request,authorization:str|None=Header(default=None)):
+    key=authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
+    with db() as c:k=c.execute("SELECT * FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(key)]).fetchone() if key else None
+    if not k:raise HTTPException(401,"Invalid or missing API key.")
+    result=await generate_image_payload(str(req.get("prompt","")).strip())
+    return {"created":int(time.time()),"data":[{"b64_json":result["url"].split(",",1)[1],"url":result["url"],"model":result["model"],"prompt":result["prompt"]}]}
 
 @app.get("/v1/models")
 async def models(authorization:str|None=Header(default=None)):
