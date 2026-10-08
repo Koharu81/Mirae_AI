@@ -92,8 +92,9 @@ async function loadHistory(){
 function setAccountLabel(){
   if($("#accountName"))$("#accountName").textContent=user?(profile.name||user.name):"계정";
   if($("#userInfo"))$("#userInfo").textContent=user?(profile.name||user.name)+" · "+user.email:"로그인하지 않음";
-  if($("#accountAvatar"))setAvatar($("#accountAvatar"),profile.name||user?.name||"M",MIRAE_LOGO);
-  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),profile.name||user?.name||"M",MIRAE_LOGO);
+  const avatar=profile.avatar_url||"";
+  if($("#accountAvatar"))setAvatar($("#accountAvatar"),profile.name||user?.name||"M",avatar);
+  if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),profile.name||user?.name||"M",avatar);
   syncAdminButton();
 }
 function syncAdminButton(){
@@ -203,10 +204,11 @@ function applyProfile(p){
   if($("#profileEmail"))$("#profileEmail").textContent=p.email||"";
   if($("#profileBio"))$("#profileBio").value=p.bio||"";
   if($("#profileBirth"))$("#profileBirth").value=p.birth_date||"";
-  if($("#profileAvatarUrl"))$("#profileAvatarUrl").value=p.avatar_url||"";
   if($("#profileAvatar"))setAvatar($("#profileAvatar"),p.name||"M",p.avatar_url||"");
   if($("#accountAvatar"))setAvatar($("#accountAvatar"),p.name||"M",p.avatar_url||"");
   if($("#accountPageAvatar"))setAvatar($("#accountPageAvatar"),p.name||"M",p.avatar_url||"");
+  if($("#profileAvatarFile"))$("#profileAvatarFile").value="";
+  document.querySelectorAll(".msg.user .avatar").forEach(el=>setAvatar(el,p.name||user?.name||"M",p.avatar_url||""));
   setAccountLabel();
 }
 function renderEmpty(){
@@ -414,7 +416,7 @@ function add(role,text,sources=[],feedbackKey="",messageAttachments=[]){
   const name=role==="user"?(profile.name||user?.name||"나"):"Mirae";
   e.innerHTML='<div class="msg-id"><div class="avatar"></div><b class="msg-name">'+escapeHtml(name)+'</b></div><div class="wrap"><div class="bubble"></div></div>';
   const avatar=e.querySelector(".avatar");
-  if(role==="user")setAvatar(avatar,name,MIRAE_LOGO);else avatar.innerHTML="<img src=\""+MIRAE_LOGO+"\" alt=\"Mirae\" loading=\"lazy\">";
+  if(role==="user")setAvatar(avatar,name,profile.avatar_url||"");else avatar.innerHTML="<img src=\""+MIRAE_LOGO+"\" alt=\"Mirae\" loading=\"lazy\">";
   if(role==="assistant")renderBubble(e.querySelector(".bubble"),text);else e.querySelector(".bubble").textContent=text;
   if(role==="assistant"&&sources.length)renderSources(e,sources);
   if(role==="user"&&messageAttachments.length)renderMessageAttachments(e,messageAttachments);
@@ -795,10 +797,24 @@ document.addEventListener("keydown",e=>{
 });
 $("#account").onclick=()=>user?openSettings("profile"):openAuth("login");
 $("#saveProfile").onclick=async()=>{
+  const btn=$("#saveProfile");btn.disabled=true;
   try{
-    const p=await req("/profile",{method:"PUT",body:JSON.stringify({name:$("#profileName").value,bio:$("#profileBio").value,birth_date:$("#profileBirth").value||null,avatar_url:$("#profileAvatarUrl").value})});
-    user.name=p.name;setAccountLabel();applyProfile(p);$("#globalStatus").textContent="프로필이 저장되었습니다.";
-  }catch(e){alert(e.message)}
+    const file=$("#profileAvatarFile")?.files?.[0];
+    let p=await req("/profile",{method:"PUT",body:JSON.stringify({name:$("#profileName").value,bio:$("#profileBio").value,birth_date:$("#profileBirth").value||null,avatar_url:file?"":(profile.avatar_url||"")})});
+    if(file){
+      if(file.size>5*1024*1024)throw new Error("프로필 이미지는 5MB 이하만 업로드할 수 있습니다.");
+      const fd=new FormData();fd.append("file",file);
+      p=await req("/profile/avatar",{method:"POST",body:fd});
+    }
+    user.name=p.name;applyProfile(p);setAccountLabel();$("#globalStatus").textContent="프로필이 저장되었습니다.";
+  }catch(e){alert(e.message)}finally{btn.disabled=false}
+};
+$("#profileAvatarFile").onchange=()=>{
+  const file=$("#profileAvatarFile")?.files?.[0];if(!file)return;
+  if(file.size>5*1024*1024){alert("프로필 이미지는 5MB 이하만 업로드할 수 있습니다.");$("#profileAvatarFile").value="";return}
+  const reader=new FileReader();
+  reader.onload=()=>{profile.avatar_url=String(reader.result||"");setAvatar($("#profileAvatar"),profile.name||user?.name||"M",profile.avatar_url);};
+  reader.readAsDataURL(file);
 };
 $("#logout").onclick=async()=>{try{await req("/auth/logout",{method:"POST"})}catch{}user=null;setAccountLabel();syncAdminButton();$("#settingsOverlay").classList.add("hidden");$("#adminOverlay")?.classList.add("hidden");newChat(false)};
 $("#clearLocal").onclick=()=>{localStorage.removeItem("mirae-local");chats=[];newChat(false)};

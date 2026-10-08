@@ -139,7 +139,7 @@ class Settings(BaseModel):
     temperature:float=Field(.7,ge=.2,le=1.2)
 class Profile(BaseModel):
     name:str=Field(min_length=1,max_length=40); bio:str=Field("",max_length=500)
-    birth_date:date|None=None; avatar_url:str=Field("",max_length=1000)
+    birth_date:date|None=None; avatar_url:str=Field("",max_length=8_000_000)
 class KeyCreate(BaseModel): name:str=Field(min_length=2,max_length=80)
 class SkillCreate(BaseModel):
     name:str=Field(min_length=1,max_length=60); description:str=Field("",max_length=500)
@@ -597,9 +597,28 @@ async def get_profile(request:Request):
 async def put_profile(data:Profile,request:Request):
     u=session_user(request)
     if not u:raise HTTPException(401,"로그인이 필요합니다.")
-    if data.avatar_url and not re.match(r"^https?://",data.avatar_url,re.I):raise HTTPException(400,"프로필 이미지 URL은 http:// 또는 https://여야 합니다.")
+    avatar=str(data.avatar_url or "").strip()
+    if avatar and not (re.match(r"^https?://",avatar,re.I) or re.match(r"^data:image/(?:png|jpe?g|webp|gif);base64,",avatar,re.I)):
+        raise HTTPException(400,"프로필 이미지는 업로드된 이미지 또는 http(s) 주소여야 합니다.")
+    if len(avatar)>7_500_000:raise HTTPException(413,"프로필 이미지가 너무 큽니다.")
     with db() as c:
-        r=c.execute("UPDATE mirae_users SET name=%s,bio=%s,birth_date=%s,avatar_url=%s,updated_at=now() WHERE id=%s RETURNING id,email,name,bio,birth_date,avatar_url",[data.name.strip(),data.bio.strip(),data.birth_date,data.avatar_url.strip(),u["id"]]).fetchone();c.commit()
+        r=c.execute("UPDATE mirae_users SET name=%s,bio=%s,birth_date=%s,avatar_url=%s,updated_at=now() WHERE id=%s RETURNING id,email,name,bio,birth_date,avatar_url",[data.name.strip(),data.bio.strip(),data.birth_date,avatar,u["id"]]).fetchone();c.commit()
+    return {"name":r["name"],"email":r["email"],"bio":r["bio"],"birth_date":r["birth_date"].isoformat() if r["birth_date"] else None,"avatar_url":r["avatar_url"]}
+
+@app.post("/profile/avatar")
+async def upload_profile_avatar(request:Request,file:UploadFile=File(...)):
+    u=session_user(request)
+    if not u:raise HTTPException(401,"로그인이 필요합니다.")
+    content_type=(file.content_type or "").lower().strip()
+    allowed={"image/png","image/jpeg","image/webp","image/gif"}
+    if content_type not in allowed:raise HTTPException(400,"PNG, JPG, WEBP, GIF 이미지만 업로드할 수 있습니다.")
+    data=await file.read(5_500_001)
+    if len(data)>5_500_000:raise HTTPException(413,"프로필 이미지는 5MB 이하만 업로드할 수 있습니다.")
+    if not data:raise HTTPException(400,"빈 이미지 파일입니다.")
+    avatar="data:"+content_type+";base64,"+base64.b64encode(data).decode("ascii")
+    if len(avatar)>7_500_000:raise HTTPException(413,"프로필 이미지가 너무 큽니다.")
+    with db() as c:
+        r=c.execute("UPDATE mirae_users SET avatar_url=%s,updated_at=now() WHERE id=%s RETURNING name,email,bio,birth_date,avatar_url",[avatar,u["id"]]).fetchone();c.commit()
     return {"name":r["name"],"email":r["email"],"bio":r["bio"],"birth_date":r["birth_date"].isoformat() if r["birth_date"] else None,"avatar_url":r["avatar_url"]}
 
 @app.get("/settings")
