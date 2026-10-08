@@ -160,3 +160,6 @@ body.sidebar-collapsed .account-avatar{margin:0}
 body.sidebar-collapsed .composer-wrap{left:72px!important}
 body.sidebar-collapsed .sidebar .mark{width:38px;height:38px}
 @media(max-width:800px){.sidebar-toggle{display:none!important}.composer-wrap{left:0!important}}
+
+/* Chat response visibility and Mirae identity repair */
+.mirae-avatar{background:#fff!important;border:1px solid #e0e4eb!important;padding:3px!important;overflow:hidden}.mirae-avatar img{width:100%;height:100%;object-fit:contain!important;display:block}.msg.assistant .msg-id{align-items:center}.msg.assistant .msg-name{color:#5c6470!important;font-weight:700}.msg.assistant .wrap{min-width:0}.msg.assistant .bubble{color:#17191d!important;opacity:1!important;visibility:visible!important}.msg.assistant .process{color:#333943!important;background:#f8f9fb!important;border:1px solid #d9dee7!important}.msg.assistant .process-toggle{color:#454b55!important}.msg.assistant .process-label,.msg.assistant .process-details,.msg.assistant .process-details *{color:#454b55!important}.msg.assistant .process-dot{background:#7b8491!important}

@@ -1,9 +1,8 @@
 {
   "cleanUrls": true,
   "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://api.koharu.live/:path*"
-    }
+    { "source": "/api/:path*", "destination": "https://api.koharu.live/:path*" },
+    { "source": "/share/:code", "destination": "/index.html" },
+    { "source": "/share/:code/", "destination": "/index.html" }
   ]
 }

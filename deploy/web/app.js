@@ -460,7 +460,7 @@ function renderSources(e,sources){
 }
 function createAssistant(){
   const e=document.createElement("article");e.className="msg assistant";
-  e.innerHTML='<div class="msg-id"><div class="avatar">M</div><b class="msg-name">Mirae</b></div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">처리 요약</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
+  e.innerHTML='<div class="msg-id"><div class="avatar mirae-avatar"><img src="/mirae-logo.png" alt="Mirae AI"></div><b class="msg-name">Mirae AI</b></div><div class="wrap"><div class="process"><button class="process-toggle" type="button"><span class="process-dot"></span><span class="process-label">처리 요약</span><span class="process-chevron">⌄</span></button><div class="process-details"></div></div><div class="bubble"></div></div>';
   const process=e.querySelector(".process"),toggle=e.querySelector(".process-toggle");
   toggle.onclick=()=>{process.classList.toggle("expanded");toggle.querySelector(".process-chevron").textContent=process.classList.contains("expanded")?"⌃":"⌄"};
   $("#messages").appendChild(e);e.scrollIntoView({behavior:"smooth",block:"end"});
@@ -640,15 +640,23 @@ function parseSSEBlock(block,box,state){
 async function streamAsk(text,box){
   const body={message:text,history:current.slice(0,-1).slice(-12),personality:settings.personality,instructions:settings.instructions,web_search:settings.web_search,temperature:settings.temperature,max_tokens:1400,conversation_id:currentId,attachments:attachments.map(({name,type,size,text})=>({name,type,size,text}))};
   stage(box,"질문 분석");
-  const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
-  if(!r.ok)throw Error(await r.text().catch(()=>"AI API 요청에 실패했습니다."));
-  if(!r.body)throw Error("스트리밍 응답을 받을 수 없습니다.");
-  const reader=r.body.getReader(),decoder=new TextDecoder();let buffer="",state={done:false,sources:[],conversation_id:"",title:currentTitle};
-  while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let parts=buffer.split(/\n\n/);buffer=parts.pop()||"";for(const part of parts)parseSSEBlock(part,box,state)}
-  if(buffer.trim())parseSSEBlock(buffer,box,state);
-  if(!state.done)finish(box);
-  if(!box.raw)throw Error("AI 서버가 답변을 반환하지 않았습니다.");
-  return {reply:box.raw,sources:state.sources||[],conversation_id:state.conversation_id||currentId,title:state.title||currentTitle};
+  const state={done:false,sources:[],conversation_id:"",title:currentTitle};
+  try{
+    const r=await fetch(API+"/chat/stream",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify(body)});
+    if(!r.ok)throw Error("stream HTTP "+r.status);
+    if(!r.body)throw Error("stream body unavailable");
+    const reader=r.body.getReader(),decoder=new TextDecoder();let buffer="";
+    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const parts=buffer.split(/\r?\n\r?\n/);buffer=parts.pop()||"";for(const part of parts)parseSSEBlock(part,box,state)}
+    if(buffer.trim())parseSSEBlock(buffer,box,state);
+    if(box.raw&&box.raw.trim())return {reply:box.raw,sources:state.sources||[],conversation_id:state.conversation_id||currentId,title:state.title||currentTitle};
+  }catch(e){console.warn("Mirae stream failed; retrying JSON endpoint",e)}
+  stage(box,"일반 응답으로 재시도");box.raw="";
+  const d=await req("/chat",{method:"POST",body:JSON.stringify(body)});
+  const reply=String(d.reply||d.content||d.message||"").trim();
+  if(!reply)throw Error("AI 서버의 /chat 응답에 답변이 없습니다.");
+  box.raw=reply;if(Array.isArray(d.sources)&&d.sources.length){state.sources=d.sources;renderSources(box.e,state.sources)}
+  renderBubble(box.bubble,reply);finish(box);
+  return {reply,sources:state.sources||[],conversation_id:d.conversation_id||currentId,title:d.title||currentTitle};
 }
 
 async function generateImage(prompt){
