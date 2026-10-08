@@ -29,8 +29,9 @@ function conversationTitle(text){
 async function req(path,opt={}){
   const isForm=opt.body instanceof FormData;
   const r=await fetch(API+path,{credentials:"include",...opt,headers:{...(isForm?{}:{"Content-Type":"application/json"}),...(opt.headers||{})}});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw Error(d.detail||"요청에 실패했습니다.");
+  const raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch{d={raw}};
+  if(!r.ok){const detail=d.detail||d.message||d.error||d.raw||("HTTP "+r.status);throw Error("HTTP "+r.status+": "+String(detail).slice(0,700));}
+  if(d&&typeof d==="object"&&d.raw&&Object.keys(d).length===1)throw Error("서버가 JSON이 아닌 응답을 반환했습니다: "+String(d.raw).slice(0,300));
   return d;
 }
 function applyTheme(){
@@ -69,7 +70,7 @@ if(conversationSearch){
     historySearchTimer=setTimeout(renderHistory,80);
   };
 }
-  const shareMatch=location.pathname.match(/^\/share\/([A-Za-z]{8})\/?$/);
+  const shareMatch=location.pathname.match(/^\/share\/([A-Za-z0-9_-]{6,64})\/?$/);
   if(shareMatch){await renderSharedConversation(shareMatch[1]);return}
   fillSettings();renderHistory();newChat(false);setupTools();
   try{
@@ -651,7 +652,9 @@ async function streamAsk(text,box){
     if(box.raw&&box.raw.trim())return {reply:box.raw,sources:state.sources||[],conversation_id:state.conversation_id||currentId,title:state.title||currentTitle};
   }catch(e){console.warn("Mirae stream failed; retrying JSON endpoint",e)}
   stage(box,"일반 응답으로 재시도");box.raw="";
-  const d=await req("/chat",{method:"POST",body:JSON.stringify(body)});
+  let d;
+  try{d=await req("/chat",{method:"POST",body:JSON.stringify(body)});}
+  catch(e){throw Error("스트리밍과 일반 채팅 요청이 모두 실패했습니다. "+e.message)}
   const reply=String(d.reply||d.content||d.message||"").trim();
   if(!reply)throw Error("AI 서버의 /chat 응답에 답변이 없습니다.");
   box.raw=reply;if(Array.isArray(d.sources)&&d.sources.length){state.sources=d.sources;renderSources(box.e,state.sources)}
@@ -691,7 +694,7 @@ async function ask(text){
     if(c){c.messages=current;c.title=d.title||currentTitle}
     saveLocal();
   }
-  catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop()}
+  catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop();console.error("Mirae chat request failed",e)}
   finally{attachments=[];renderAttachmentStrip();$("#send").disabled=false;$("#input").focus()}
 }
 function openAuth(mode="login"){authMode=mode;pendingSignup=null;renderAuth();$("#authOverlay").classList.remove("hidden");$("#email").focus()}

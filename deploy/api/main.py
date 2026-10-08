@@ -777,7 +777,7 @@ async def share_conversation(conversation_id:str,request:Request):
 
 @app.get("/shared/{share_code}")
 async def get_shared_conversation(share_code:str):
-    if not re.fullmatch(r"[A-Za-z]{8}",share_code):raise HTTPException(404,"공유 대화를 찾을 수 없습니다.")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}",share_code):raise HTTPException(404,"공유 대화를 찾을 수 없습니다.")
     with db() as c:
         conv=c.execute("SELECT id,title,created_at,updated_at FROM mirae_conversations WHERE share_code=%s",[share_code]).fetchone()
         if not conv:raise HTTPException(404,"공유 대화를 찾을 수 없습니다.")
