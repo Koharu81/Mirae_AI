@@ -541,8 +541,9 @@ function renderHistory(){
     const menu=document.createElement("button");menu.className="history-menu";menu.type="button";menu.textContent="⋯";menu.title="대화 메뉴";menu.onclick=e=>{e.stopPropagation();openConversationMenu(row,c)};
     row.append(b,menu);parent.appendChild(row);
   });
-  if(favorites.length){const box=document.createElement("div");box.className="history-folder";box.innerHTML="<div class='history-folder-head'>★ 즐겨찾기</div><div class='history-folder-items'></div>";draw(favorites,box.querySelector(".history-folder-items"));h.appendChild(box)}
-  Object.entries(folders).forEach(([id,items])=>{const f=conversationFolders.find(x=>String(x.id)===String(id));if(!f)return;const box=document.createElement("div");box.className="history-folder";box.innerHTML="<div class='history-folder-head'>▾ "+escapeHtml(f.name)+"</div><div class='history-folder-items'></div>";draw(items,box.querySelector(".history-folder-items"));h.appendChild(box)});
+  const makeGroup=(name,items,icon,key)=>{const box=document.createElement("section");box.className="history-folder";const head=document.createElement("button");head.type="button";head.className="history-folder-head";head.setAttribute("aria-expanded","true");head.innerHTML="<i data-lucide='chevron-down' class='folder-chevron'></i><i data-lucide='"+icon+"' class='folder-icon'></i><span>"+escapeHtml(name)+"</span><small>"+items.length+"</small>";const body=document.createElement("div");body.className="history-folder-items";draw(items,body);head.onclick=()=>{const open=box.classList.toggle("collapsed")===false;head.setAttribute("aria-expanded",String(open));if(window.lucide)lucide.createIcons()};box.append(head,body);h.appendChild(box)};
+  if(favorites.length)makeGroup("즐겨찾기",favorites,"star","favorites");
+  Object.entries(folders).forEach(([id,items])=>{const f=conversationFolders.find(x=>String(x.id)===String(id));if(f)makeGroup(f.name,items,"folder",id)});
   draw(loose,h);
 }
 function closeConversationMenus(){document.querySelectorAll(".conversation-menu").forEach(x=>x.remove())}
@@ -945,6 +946,8 @@ $("#form").onsubmit=e=>{e.preventDefault();ask($("#input").value)};
 $("#input").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(e.target.value)}};
 $("#input").oninput=e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"};
 $("#newChat").onclick=()=>newChat();$("#mobileNew").onclick=()=>newChat();$("#mobileMenu").onclick=()=>$("#sidebar").classList.toggle("open");
+$("#sidebarToggle").onclick=()=>{if(matchMedia("(max-width:800px)").matches){$("#sidebar").classList.toggle("open")}else{document.body.classList.toggle("sidebar-collapsed");localStorage.setItem("mirae-sidebar-collapsed",document.body.classList.contains("sidebar-collapsed")?"1":"0")}if(window.lucide)lucide.createIcons()};
+if(localStorage.getItem("mirae-sidebar-collapsed")==="1")document.body.classList.add("sidebar-collapsed");
 $("#newFolder").onclick=createConversationFolder;
 let historySearchTimer=null;
 

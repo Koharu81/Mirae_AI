@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="preconnect" href="https://api.koharu.live" crossorigin><link rel="dns-prefetch" href="//api.koharu.live">
-<title>Mirae AI</title><link rel="icon" type="image/png" href="/mirae-logo.png"><link rel="stylesheet" href="/app.css?v=24">
+<title>Mirae AI</title><link rel="icon" type="image/png" href="/mirae-logo.png"><link rel="stylesheet" href="/app.css?v=25">
 </head>
 <body>
 <div class="app">
@@ -20,7 +20,7 @@
 </aside>
 <main class="main">
   <header class="top">
-    <div class="title-wrap"><button class="icon mobile-only" id="mobileMenu" aria-label="메뉴"><i data-lucide="menu"></i></button><strong id="title">새 대화</strong></div>
+    <div class="title-wrap"><button class="icon sidebar-toggle" id="sidebarToggle" aria-label="사이드바 접기/펼치기" title="사이드바 접기/펼치기"><i data-lucide="panel-left"></i></button><button class="icon mobile-only" id="mobileMenu" aria-label="메뉴"><i data-lucide="menu"></i></button><strong id="title">새 대화</strong></div>
     <div class="top-actions"><button class="icon mobile-only" id="mobileNew" aria-label="새 대화"><i data-lucide="plus"></i></button></div>
   </header>
   <section class="chat" id="chat"><div class="inner" id="messages"></div></section>
@@ -217,6 +217,6 @@
 <div class="tool-overlay hidden" id="canvasOverlay"><div class="tool-modal canvas-modal"><div class="tool-head"><div><b>AI Canvas</b><small>문서를 자유롭게 작성하고 Mirae와 함께 다듬습니다.</small></div><button class="icon" id="closeCanvas" aria-label="닫기"><i data-lucide="x"></i></button></div><div class="canvas-toolbar"><button id="canvasImprove">AI로 다듬기</button><button id="canvasSummary">요약</button><button id="canvasMarkdown">Markdown으로 복사</button></div><textarea id="canvasEditor" placeholder="문서를 작성하세요..."></textarea></div></div>
 <div class="tool-overlay hidden" id="markdownOverlay"><div class="tool-modal"><div class="tool-head"><div><b>Markdown 편집기</b><small>작성한 Markdown을 실시간으로 미리봅니다.</small></div><button class="icon" id="closeMarkdown" aria-label="닫기"><i data-lucide="x"></i></button></div><div class="md-editor-grid"><textarea id="markdownEditor" placeholder="# 제목"></textarea><div class="md-preview" id="markdownPreview"></div></div></div></div>
 <div class="tool-overlay hidden" id="codeOverlay"><div class="tool-modal code-modal"><div class="tool-head"><div><b>코드 실행 샌드박스</b><small>코드는 서버가 아니라 현재 브라우저에서 격리 실행됩니다.</small></div><button class="icon" id="closeCode" aria-label="닫기"><i data-lucide="x"></i></button></div><div class="code-run-toolbar"><select id="codeLanguage"><option value="javascript">JavaScript</option><option value="python">Python</option></select><button id="runCode">실행</button></div><textarea id="codeEditor">console.log("Hello, Mirae AI");</textarea><pre id="codeOutput"></pre></div></div>
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script><script src="/app.js?v=23" defer></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script><script src="/app.js?v=25" defer></script>
 </body>
 </html>

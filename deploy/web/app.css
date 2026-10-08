@@ -114,3 +114,49 @@ body{background:linear-gradient(135deg,#fafbfc 0%,#f7f8fa 48%,#f2f5f9 100%);lett
 .modal{border-radius:24px;box-shadow:0 35px 100px rgba(0,0,0,.20)}.settings{width:min(1040px,calc(100vw - 32px));height:min(780px,calc(100vh - 32px))}.nav{width:230px;padding:20px;background:rgba(246,247,249,.88)}.nav-title{font-size:21px;margin:4px 10px 20px}.nav-btn{padding:11px 12px;border-radius:11px;margin-bottom:2px}.nav-btn.active{font-weight:720}.setting-body{padding:34px}.setting-head{padding-bottom:18px;margin-bottom:24px}.setting-head h2{font-size:27px;letter-spacing:-.04em}.setting-row{padding:18px 0}.field{margin:17px 0}.field input,.field textarea,.field select,.setting-body input,.setting-body textarea,.setting-body select{border-radius:12px;padding:12px 13px}
 .profile-head,.account-card{padding:18px;border-radius:16px;background:linear-gradient(135deg,#f7f8fa,#fff)}.profile-avatar{width:60px;height:60px;border-radius:17px;box-shadow:0 5px 18px rgba(0,0,0,.08)}.profile-summary{min-width:0}.profile-summary small{color:var(--muted);font-size:11px;margin-top:3px}.avatar-upload{border:1px dashed #cfd3da;border-radius:14px;padding:14px;background:#fafbfc}.avatar-upload input{border:0!important;padding:0!important;background:transparent!important}.avatar-upload small{display:block;color:var(--muted);font-size:11px;margin-top:8px}.account-avatar{width:32px;height:32px;border-radius:10px;background:var(--accent)}.account-avatar img,.profile-avatar img,.avatar img{object-fit:cover;display:block}
 @media(max-width:800px){.sidebar{width:min(320px,90vw)}.composer-wrap{left:0}.inner,.composer{width:calc(100% - 24px)}}@media(max-width:560px){.inner,.composer{width:calc(100% - 16px)}.hero h1{font-size:37px}.setting-body{padding:20px}}
+
+/* UI contrast and navigation repair v25 */
+:root{--bg:#ffffff;--panel:#f7f8fa;--card:#ffffff;--text:#17191d;--muted:#626873;--line:#d9dde4;--hover:#edf0f4;--accent:#24262b;--accentText:#ffffff}
+html,body,.app,.main,.chat,.inner,.sidebar{opacity:1!important;filter:none!important;color:var(--text)}
+body{background:#fff!important;color:#17191d!important}
+.sidebar{background:#f7f8fa!important;border-right:1px solid #dfe3e9!important;color:#202329!important}
+.brand-copy b,.title-wrap strong,.label,.history-main,.account-name,.side-btn,.conversation-tools>span{color:#202329!important}
+.brand-copy small,.label,.history-folder-head small,.meta{color:#626873!important}
+.history-folder-head{width:100%;display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent!important;color:#454b55!important;font-size:12px;font-weight:700;padding:9px 8px;border-radius:9px;cursor:pointer}
+.history-folder-head:hover{background:#e9edf2!important;color:#17191d!important}
+.history-folder-head>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-folder-head small{font-size:10px;font-weight:600}
+.folder-icon{width:15px;height:15px;color:#697586;flex:none}
+.folder-chevron{width:13px;height:13px;color:#7b8491;transition:transform .16s ease;flex:none}
+.history-folder.collapsed .folder-chevron{transform:rotate(-90deg)}
+.history-folder.collapsed .history-folder-items{display:none}
+.history-folder-items{padding-left:4px}
+.history-row .history-main{color:#30343b!important;background:transparent!important;font-size:12px}
+.history-row .history-main:hover,.history-row:focus-within .history-main{background:#e9edf2!important;color:#111318!important}
+.history-row .history-menu{color:#626873!important;opacity:.8!important}
+.conversation-search input{color:#202329!important;background:#fff!important;border-color:#cbd1da!important;font-size:12px!important}
+.conversation-search input::placeholder{color:#717783!important;opacity:1!important}
+.new-chat{background:#25272c!important;color:#fff!important;border:1px solid #25272c!important}
+.new-chat span,.new-chat svg{color:#fff!important}
+.side-btn,.account-btn{color:#24272d!important}
+.account-btn{background:#fff!important;border-color:#d9dde4!important}
+.top{background:#fff!important;border-bottom:1px solid #e2e5ea!important}
+.title-wrap strong{color:#202329!important}
+.hero h1{color:#17191d!important}
+.hero p,.card span{color:#626873!important}
+.card{background:#fff!important;color:#202329!important;border:1px solid #dce0e6!important;box-shadow:0 2px 8px rgba(20,25,35,.035)}
+.card:hover{background:#f5f7f9!important;border-color:#c5cbd5!important}
+.composer{background:#fff!important;border:1px solid #d6dbe3!important;box-shadow:0 12px 38px rgba(20,25,35,.10)!important}
+.composer textarea{color:#17191d!important}
+.composer textarea::placeholder{color:#737985!important;opacity:1!important}
+.sidebar-toggle{display:inline-grid;place-items:center;color:#414751!important;background:#fff!important;border-color:#d9dde4!important}
+.sidebar-toggle:hover{background:#edf0f4!important}
+body.sidebar-collapsed .sidebar{width:72px!important;padding:14px 10px!important}
+body.sidebar-collapsed .sidebar .brand{justify-content:center;padding:8px 0!important}
+body.sidebar-collapsed .brand-copy,body.sidebar-collapsed .new-chat span,body.sidebar-collapsed .conversation-tools>span,body.sidebar-collapsed .conversation-tools #newFolder,body.sidebar-collapsed .conversation-search,body.sidebar-collapsed .history,body.sidebar-collapsed .side-btn span,body.sidebar-collapsed .account-name{display:none!important}
+body.sidebar-collapsed .new-chat,body.sidebar-collapsed .side-btn,body.sidebar-collapsed .account-btn{justify-content:center!important;padding:10px 0!important}
+body.sidebar-collapsed .side{align-items:center}
+body.sidebar-collapsed .account-avatar{margin:0}
+body.sidebar-collapsed .composer-wrap{left:72px!important}
+body.sidebar-collapsed .sidebar .mark{width:38px;height:38px}
+@media(max-width:800px){.sidebar-toggle{display:none!important}.composer-wrap{left:0!important}}
