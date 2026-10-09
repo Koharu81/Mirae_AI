@@ -105,16 +105,31 @@ async function loadProfile(){
 async function loadHistory(){
   if(!user||historyLoaded)return;
   let convs=[],rows=[],errors=[];
-  try{convs=await req("/conversations");}catch(e){errors.push("대화 목록: "+e.message);}
-  try{rows=await req("/history?limit=500");}catch(e){errors.push("대화 기록: "+e.message);}
-  if(!Array.isArray(convs))convs=[];
-  if(!Array.isArray(rows))rows=[];
+  try{
+    convs=await req("/conversations");
+    if(!Array.isArray(convs))convs=[];
+  }catch(e){errors.push("대화 목록: "+e.message);}
+  try{
+    rows=await req("/history?limit=500");
+    if(!Array.isArray(rows))rows=[];
+  }catch(e){errors.push("대화 기록: "+e.message);}
   if(!convs.length&&!rows.length&&errors.length)throw Error(errors.join(" · "));
   restoreServer(rows,convs);
+  // The history endpoint is intentionally paginated. Fetch each conversation's
+  // complete message list so older conversations and long chats are not lost.
+  const ids=convs.map(c=>String(c.id||"")).filter(id=>id&&!id.startsWith("legacy-"));
+  const results=await Promise.allSettled(ids.map(async id=>{
+    const messages=await req("/conversations/"+encodeURIComponent(id)+"/messages");
+    const c=chats.find(x=>x.id===id);
+    if(c&&Array.isArray(messages))c.messages=messages.map(m=>({role:m.role,content:m.content,sources:m.sources||[],attachments:m.attachments||[],feedback_key:m.role==="assistant"?simpleHash(m.content):""}));
+  }));
+  const messageFailures=results.filter(x=>x.status==="rejected");
+  localStorage.setItem("mirae-local",JSON.stringify(chats));
   await loadConversationFolders();
   historyLoaded=true;
   renderHistory();
-  if(errors.length&&$("#globalStatus"))$("#globalStatus").textContent=errors.join(" · ");
+  const allErrors=[...errors,...(messageFailures.length?["일부 대화 기록을 모두 불러오지 못했습니다."]:[])];
+  if(allErrors.length&&$("#globalStatus"))$("#globalStatus").textContent=allErrors.join(" · ");
 }
 function setAccountLabel(){
   if($("#accountName"))$("#accountName").textContent=user?(profile.name||user.name):"계정";
@@ -190,7 +205,7 @@ async function loadAdminTraffic(){
   try{
     const d=await req("/admin/traffic");
     const box=$("#adminTraffic");box.innerHTML="";
-    [["요청 수",d.requests],["평균 응답",String(d.avg_latency||0)+" ms"],["성공률",String(Number(d.success_rate||0).toFixed(1))+"%"],["서버 오류",d.server_errors]].forEach(([a,b])=>{
+    [["요청 수",d.requests],["평균 응답",String(d.avg_latency_ms??d.avg_latency??0)+" ms"],["성공률",String(Number(d.success_rate||0).toFixed(1))+"%"],["서버 오류",d.server_errors]].forEach(([a,b])=>{
       const x=document.createElement("div");x.className="traffic-card";x.innerHTML="<small>"+a+"</small><b>"+escapeHtml(String(b??0))+"</b>";box.appendChild(x);
     });
     const ep=$("#adminEndpoints");ep.innerHTML="";
@@ -332,13 +347,15 @@ async function addFiles(fileList){
   if(binary.length){
     const fd=new FormData();binary.forEach(x=>fd.append("files",x));
     try{
-      $("#globalStatus").textContent="파일 분석 중";
+      $("#globalStatus").textContent="파일 분석 중…";
       const d=await req("/files/extract",{method:"POST",body:fd});
       if(!Array.isArray(d.files))throw Error("파일 분석 서버가 올바른 응답을 반환하지 않았습니다.");
       d.files.forEach(x=>attachments.push({name:x.name,type:x.type,size:x.size,text:x.text||"",chunks:x.chunks||[],chunk_count:x.chunk_count||1,previewUrl:""}));
     }catch(e){
-      $("#globalStatus").textContent="파일 분석 실패";
-      alert(e.message||"파일을 분석하지 못했습니다.");
+      const msg=e.message||"파일을 분석하지 못했습니다.";
+      $("#globalStatus").textContent="파일 분석 실패: "+msg;
+      $("#globalStatus").classList.remove("hidden");
+      alert("파일 첨부 실패\n\n"+msg+"\n\nPDF/DOCX/XLSX/PPTX/텍스트 파일은 100MB 이하인지 확인해 주세요.");
     }
   }
   for(const file of files.filter(x=>x.type.startsWith("image/"))){
@@ -822,11 +839,20 @@ function startResendTimer(){
 }
 $("#resendCode").onclick=async()=>{try{await req("/auth/signup/request",{method:"POST",body:JSON.stringify(pendingSignup)});$("#authMsg").textContent="새 인증 코드를 보냈습니다.";startResendTimer()}catch(e){$("#authMsg").textContent=e.message}};
 function queueSettingsSave(){
-  settings={theme:$("#theme").value,personality:$("#personality").value,instructions:$("#instructions").value,web_search:$("#web").value==="true",temperature:settings.temperature||.7};
+  settings={...settings,theme:$("#theme")?.value||settings.theme||"light",personality:$("#personality")?.value||settings.personality||"balanced",instructions:$("#instructions")?.value??settings.instructions??"",web_search:$("#web")?$("#web").value==="true":settings.web_search!==false,temperature:Number(settings.temperature)||.7};
   applyTheme();
   clearTimeout(settingsSaveTimer);
   if(!user)return;
-  settingsSaveTimer=setTimeout(async()=>{try{await req("/settings",{method:"PUT",body:JSON.stringify(settings)})}catch(e){console.error(e)}},300);
+  settingsSaveTimer=setTimeout(async()=>{
+    try{
+      const saved=await req("/settings",{method:"PUT",body:JSON.stringify(settings)});
+      settings={...settings,...saved};settingsLoaded=true;
+      if($("#globalStatus")){$("#globalStatus").textContent="설정이 저장되었습니다.";$("#globalStatus").classList.remove("hidden");}
+    }catch(e){
+      if($("#globalStatus")){$("#globalStatus").textContent="설정 저장 실패: "+e.message;$("#globalStatus").classList.remove("hidden");}
+      console.error("Mirae settings save failed",e);
+    }
+  },500);
 }
 ["theme","personality","instructions","web"].forEach(id=>{const el=$("#"+id);if(el)el.onchange=queueSettingsSave});
 if($("#instructions"))$("#instructions").oninput=queueSettingsSave;
