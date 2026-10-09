@@ -716,7 +716,7 @@ async def conversations(request:Request):
                               ORDER BY h.created_at ASC,h.id ASC LIMIT 1
                           ) first_msg ON true
                           WHERE c.user_id=%s
-                          ORDER BY c.favorite DESC,c.updated_at DESC LIMIT 500""",[u["id"]]).fetchall()
+                          ORDER BY c.favorite DESC,c.updated_at DESC""",[u["id"]]).fetchall()
     out=[]
     for row in rows:
         item=dict(row)
@@ -748,12 +748,26 @@ async def search_conversations(q:str="",request:Request=None):
     if not query:return await conversations(request)
     like="%"+query.replace("%","\\%").replace("_","\\_")+"%"
     with db() as c:
-        rows=c.execute("""SELECT id,title,created_at,updated_at,favorite,folder_id,share_code
-                          FROM mirae_conversations
-                          WHERE user_id=%s AND (title ILIKE %s ESCAPE '\' OR id IN
+        rows=c.execute("""SELECT c.id,c.title,c.created_at,c.updated_at,c.favorite,c.folder_id,c.share_code,
+                                 first_msg.content AS first_user_message
+                          FROM mirae_conversations c
+                          LEFT JOIN LATERAL (
+                              SELECT h.content FROM mirae_chat_history h
+                              WHERE h.user_id=c.user_id AND h.conversation_id=c.id AND h.role='user'
+                              ORDER BY h.created_at ASC,h.id ASC LIMIT 1
+                          ) first_msg ON true
+                          WHERE c.user_id=%s AND (c.title ILIKE %s ESCAPE '\' OR c.id IN
                             (SELECT conversation_id FROM mirae_chat_history WHERE user_id=%s AND content ILIKE %s ESCAPE '\'))
-                          ORDER BY favorite DESC,updated_at DESC LIMIT 100""",[u["id"],like,u["id"],like]).fetchall()
-    return rows
+                          ORDER BY c.favorite DESC,c.updated_at DESC LIMIT 100""",[u["id"],like,u["id"],like]).fetchall()
+    out=[]
+    for row in rows:
+        item=dict(row)
+        title=str(item.get("title") or "")
+        if title=="새 대화" or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+",title.strip()):
+            item["title"]=make_conversation_title(item.get("first_user_message",""))
+        item.pop("first_user_message",None)
+        out.append(item)
+    return out
 
 @app.get("/conversation-folders")
 async def list_conversation_folders(request:Request):
@@ -1461,3 +1475,5 @@ async def models(authorization:str|None=Header(default=None)):
     with db() as c:k=c.execute("SELECT id FROM mirae_api_keys WHERE key_hash=%s AND state='active'",[digest(authorization[7:])]).fetchone()
     if not k:raise HTTPException(401,"Invalid API key.")
     return {"object":"list","data":[{"id":MODEL_NAME,"object":"model","owned_by":"mirae"}]}
+
+[executed on device: DESKTOP-Q2SGEF8 (cc8c9b60-743b-4124-a658-da7007809e32)]
