@@ -568,7 +568,7 @@ function openConversationMenu(row,c){
   closeConversationMenus();
   const menu=document.createElement("div");menu.className="conversation-menu";
   const fav=document.createElement("button");fav.textContent=c.favorite?"★ 즐겨찾기 해제":"☆ 즐겨찾기";fav.onclick=()=>toggleFavorite(c);
-  const share=document.createElement("button");share.textContent="공유 링크";share.onclick=()=>shareConversation(c);
+  const share=document.createElement("button");share.type="button";share.textContent="공유 링크";share.onclick=()=>shareConversation(c,share);
   const folder=document.createElement("button");folder.textContent="폴더 이동";folder.onclick=()=>moveConversation(c);
   const rename=document.createElement("button");rename.textContent="이름 변경";rename.onclick=()=>renameConversation(c);
   const del=document.createElement("button");del.textContent="삭제";del.className="delete-menu";del.onclick=()=>deleteConversation(c);
@@ -577,8 +577,16 @@ function openConversationMenu(row,c){
 let conversationFolders=[];
 async function loadConversationFolders(){if(!user)return;try{conversationFolders=await req("/conversation-folders")}catch{conversationFolders=[]}}
 async function toggleFavorite(c){try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/favorite",{method:"PUT",body:JSON.stringify({favorite:!c.favorite})});c.favorite=!!d.favorite;renderHistory();closeConversationMenus()}catch(e){alert(e.message)}}
-async function shareConversation(c){
-  try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/share",{method:"POST"});c.share_code=d.code;await copyText(d.url,{textContent:"공유 링크"});alert("공유 링크가 생성되었습니다.\n"+d.url)}catch(e){alert(e.message)}
+async function shareConversation(c,button){
+  try{
+    if(!user){openAuth("login");return}
+    const d=await req("/conversations/"+encodeURIComponent(c.id)+"/share",{method:"POST"});
+    if(!d.code)throw Error("서버에서 공유 코드를 받지 못했습니다.");
+    c.share_code=d.code;
+    const url=new URL("/share/"+encodeURIComponent(d.code),location.origin).href;
+    await copyText(url,button);
+    alert("공유 링크가 생성되었습니다.\n"+url);
+  }catch(e){alert(e.message)}
 }
 async function moveConversation(c){
   if(!conversationFolders.length){alert("먼저 대화 옆의 + 버튼으로 폴더를 만들어주세요.");return}
@@ -635,10 +643,12 @@ function newChat(save=true){
   current=[];currentId=crypto.randomUUID();currentTitle="새 대화";$("#messages").innerHTML="";renderEmpty();$("#title").textContent="새 대화";closeSidebar();
 }
 function saveLocal(){
+  const now=new Date().toISOString();
   let c=chats.find(x=>x.id===currentId);
-  if(!c){c={id:currentId,title:currentTitle||"새 대화",messages:[]};chats.push(c)}
-  c.messages=current;c.title=currentTitle||c.title||"새 대화";
-  chats=chats.slice(-100);localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
+  if(!c){c={id:currentId,title:currentTitle||"새 대화",messages:[],created_at:now};chats.push(c)}
+  c.messages=current;c.title=currentTitle||c.title||"새 대화";c.updated_at=now;
+  chats.sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
+  chats=chats.slice(0,100);localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
 }
 function parseSSEBlock(block,box,state){
   let ev="message",data="";
