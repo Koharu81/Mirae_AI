@@ -4,7 +4,7 @@ const MIRAE_LOGO="/mirae-logo.png";
 let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
 let settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};
-let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,resendTimer=null;
+let chats=[],current=[],currentId=null,authMode="login",pendingSignup=null,pendingAdminLogin=null,resendTimer=null;
 let settingsLoaded=false,profileLoaded=false,historyLoaded=false,settingsSaveTimer=null;
 let currentTitle="새 대화";
 let attachments=[];
@@ -28,7 +28,13 @@ function conversationTitle(text){
 
 async function req(path,opt={}){
   const isForm=opt.body instanceof FormData;
-  const r=await fetch(API+path,{credentials:"include",...opt,headers:{...(isForm?{}:{"Content-Type":"application/json"}),...(opt.headers||{})}});
+  const controller=opt.signal?null:new AbortController();
+  const longRequest=path==="/chat"||path==="/images/generate"||path==="/images/analyze";
+  const timeout=controller?setTimeout(()=>controller.abort(),longRequest?120000:10000):null;
+  let r;
+  try{r=await fetch(API+path,{credentials:"include",...opt,signal:opt.signal||controller.signal,headers:{...(isForm?{}:{"Content-Type":"application/json"}),...(opt.headers||{})}})}
+  catch(e){if(e.name==="AbortError")throw Error("요청 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.");throw e}
+  finally{if(timeout)clearTimeout(timeout)}
   const raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch{d={raw}};
   if(!r.ok){const detail=d.detail||d.message||d.error||d.raw||("HTTP "+r.status);throw Error("HTTP "+r.status+": "+String(detail).slice(0,700));}
   if(d&&typeof d==="object"&&d.raw&&Object.keys(d).length===1)throw Error("서버가 JSON이 아닌 응답을 반환했습니다: "+String(d.raw).slice(0,300));
@@ -105,22 +111,27 @@ function syncAdminButton(){
   b.classList.toggle("hidden",!allowed);
 }
 async function openAdminPanel(){
-  if(!user||String(user.email||"").toLowerCase()!=="admin@koharu.live")return;
+  if(!user||String(user.email||"").toLowerCase()!=="admin@koharu.live"){
+    if($("#adminStatus"))$("#adminStatus").textContent="관리자 계정으로 로그인해 주세요.";
+    return;
+  }
   document.querySelectorAll(".admin-tab").forEach(b=>b.classList.toggle("active",b.dataset.adminPage==="overview"));
   document.querySelectorAll(".admin-page").forEach(p=>p.classList.toggle("hidden",p.id!=="admin-overview"));
-  $("#adminStatus").textContent="관리자 정보를 불러오는 중…";
+  $("#adminStatus").textContent="관리자 인증 완료 · 데이터를 불러오는 중";
   $("#adminOverlay").classList.remove("hidden");
   if(window.lucide)lucide.createIcons();
-  await loadAdminOverview();
+  loadAdminOverview().catch(e=>{$("#adminStatus").textContent="관리자 데이터 로드 실패: "+e.message});
 }
 function closeAdminPanel(){$("#adminOverlay").classList.add("hidden")}
 async function loadAdminOverview(){
-  const jobs=await Promise.allSettled([
+  const jobsPromise=Promise.allSettled([
     req("/admin/overview"),
     req("/admin/users"),
     req("/admin/logs?limit=120"),
     req("/admin/settings")
   ]);
+  const detailPromise=Promise.allSettled([loadAdminSecurity(),loadAdminTraffic()]);
+  const [jobs,detail]=await Promise.all([jobsPromise,detailPromise]);
   const failures=[];
   const [overview,users,logs,settingsResult]=jobs;
   if(overview.status==="fulfilled"){
@@ -133,7 +144,6 @@ async function loadAdminOverview(){
   if(users.status==="fulfilled")renderAdminUsers(users.value);else failures.push("사용자: "+users.reason.message);
   if(logs.status==="fulfilled")renderAdminLogs(logs.value);else failures.push("로그: "+logs.reason.message);
   if(settingsResult.status==="fulfilled")fillAdminSettings(settingsResult.value);else failures.push("설정: "+settingsResult.reason.message);
-  const detail=await Promise.allSettled([loadAdminSecurity(),loadAdminTraffic()]);
   detail.forEach((x,i)=>{if(x.status==="rejected")failures.push((i?"트래픽":"보안")+": "+x.reason.message)});
   $("#adminStatus").textContent=failures.length?failures.join(" · "):"관리자 정보가 최신 상태입니다.";
   if(window.lucide)lucide.createIcons();
@@ -497,7 +507,7 @@ function finish(box){
 function restoreServer(rows,convs=[]){
   const by={},meta=Object.fromEntries(convs.map(x=>[x.id,x])),legacy=[];
   const isEmailTitle=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"").trim());
-  for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),favorite:!!c.favorite,folder_id:c.folder_id||null,share_code:c.share_code||"",messages:[]};
+  for(const c of convs)by[c.id]={id:c.id,title:conversationTitle(c.title||"새 대화"),favorite:!!c.favorite,folder_id:c.folder_id||null,share_code:c.share_code||"",created_at:c.created_at||null,updated_at:c.updated_at||c.created_at||null,messages:[]};
   for(const x of rows){
     const id=String(x.conversation_id||"").trim();
     const message={role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""};
@@ -539,16 +549,25 @@ function restoreServer(rows,convs=[]){
   const localChats=(()=>{try{const raw=JSON.parse(localStorage.getItem("mirae-local")||"[]");return Array.isArray(raw)?raw:[]}catch{return[]} })();
   const merged=[...Object.values(by)];
   for(const old of localChats){
-    if(old?.id&&!merged.some(c=>c.id===old.id)&&old.messages?.length)merged.push(old);
+    if(!old?.id||!old.messages?.length)continue;
+    const existing=merged.find(c=>c.id===old.id);
+    if(!existing)merged.push(old);
+    else{
+      if(!existing.messages?.length)existing.messages=old.messages;
+      if(!existing.title||existing.title==="새 대화")existing.title=old.title||existing.title;
+      if(new Date(old.updated_at||old.created_at||0)>new Date(existing.updated_at||existing.created_at||0))existing.updated_at=old.updated_at||old.created_at;
+    }
   }
-  chats=merged.sort((x,y)=>new Date(meta[y.id]?.updated_at||y.updated_at||y.created_at||0)-new Date(meta[x.id]?.updated_at||x.updated_at||x.created_at||0)).slice(0,100);
+  const stamp=c=>{const v=meta[c.id]?.updated_at||c.updated_at||meta[c.id]?.created_at||c.created_at;const n=Date.parse(v||0);return Number.isFinite(n)?n:0};
+  chats=merged.sort((x,y)=>stamp(y)-stamp(x)).slice(0,100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
   const search=$("#conversationSearch");
   const q=String(search?.value||"").trim().toLowerCase();
-  let list=chats.filter(c=>!q||String(c.title||"").toLowerCase().includes(q)||c.messages.some(m=>String(m.content||"").toLowerCase().includes(q)));
+  const stamp=c=>{const n=Date.parse(c.updated_at||c.created_at||0);return Number.isFinite(n)?n:0};
+  let list=chats.filter(c=>!q||String(c.title||"").toLowerCase().includes(q)||c.messages.some(m=>String(m.content||"").toLowerCase().includes(q))).sort((a,b)=>stamp(b)-stamp(a));
   const favorites=list.filter(c=>c.favorite);
   const folders={};list.filter(c=>!c.favorite&&c.folder_id).forEach(c=>(folders[c.folder_id]??=[]).push(c));
   const loose=list.filter(c=>!c.favorite&&!c.folder_id);
@@ -559,9 +578,12 @@ function renderHistory(){
     row.append(b,menu);parent.appendChild(row);
   });
   const makeGroup=(name,items,icon,key)=>{const box=document.createElement("section");box.className="history-folder";const head=document.createElement("button");head.type="button";head.className="history-folder-head";head.setAttribute("aria-expanded","true");head.innerHTML="<i data-lucide='chevron-down' class='folder-chevron'></i><i data-lucide='"+icon+"' class='folder-icon'></i><span>"+escapeHtml(name)+"</span><small>"+items.length+"</small>";const body=document.createElement("div");body.className="history-folder-items";draw(items,body);head.onclick=()=>{const open=box.classList.toggle("collapsed")===false;head.setAttribute("aria-expanded",String(open));if(window.lucide)lucide.createIcons()};box.append(head,body);h.appendChild(box)};
-  if(favorites.length)makeGroup("즐겨찾기",favorites,"star","favorites");
-  Object.entries(folders).forEach(([id,items])=>{const f=conversationFolders.find(x=>String(x.id)===String(id));if(f)makeGroup(f.name,items,"folder",id)});
-  draw(loose,h);
+  const sections=[];
+  const newest=items=>items.reduce((n,c)=>Math.max(n,stamp(c)),0);
+  if(favorites.length)sections.push({time:newest(favorites),render:()=>makeGroup("즐겨찾기",favorites,"star","favorites")});
+  Object.entries(folders).forEach(([id,items])=>{const f=conversationFolders.find(x=>String(x.id)===String(id));if(f)sections.push({time:newest(items),render:()=>makeGroup(f.name,items,"folder",id)})});
+  if(loose.length)sections.push({time:newest(loose),render:()=>draw(loose,h)});
+  sections.sort((a,b)=>b.time-a.time).forEach(section=>section.render());
 }
 function closeConversationMenus(){document.querySelectorAll(".conversation-menu").forEach(x=>x.remove())}
 function openConversationMenu(row,c){
@@ -723,19 +745,20 @@ async function ask(text){
   catch(e){box.bubble.textContent="오류가 발생했습니다. "+e.message;finish(box);current.pop();console.error("Mirae chat request failed",e)}
   finally{attachments=[];renderAttachmentStrip();$("#send").disabled=false;$("#input").focus()}
 }
-function openAuth(mode="login"){authMode=mode;pendingSignup=null;renderAuth();$("#authOverlay").classList.remove("hidden");$("#email").focus()}
+function openAuth(mode="login"){authMode=mode;pendingSignup=null;pendingAdminLogin=null;renderAuth();$("#authOverlay").classList.remove("hidden");$("#email").focus()}
 function closeAuth(){$("#authOverlay").classList.add("hidden")}
 function renderAuth(){
-  const verify=authMode==="verify",signup=authMode==="signup";
-  $("#authTitle").textContent=verify?"이메일 인증":signup?"Mirae 계정 만들기":"Mirae에 로그인";
-  $("#authDesc").textContent=verify?"이메일로 받은 6자리 인증 코드를 입력하세요.":signup?"회원가입을 완료하려면 이메일 인증이 필요합니다.":"계정으로 대화 기록과 설정을 동기화하세요.";
-  $("#nameField").classList.toggle("hidden",!signup);$("#passwordField").classList.toggle("hidden",verify);$("#codeField").classList.toggle("hidden",!verify);$("#verifyNote").classList.toggle("hidden",!verify);
-  $("#authSubmit").textContent=verify?"인증하고 가입 완료":signup?"인증 코드 보내기":"로그인";
-  $("#resendCode").classList.toggle("hidden",!verify);$("#authSwitch").classList.toggle("hidden",verify);
+  const verify=authMode==="verify"||authMode==="admin-verify",adminVerify=authMode==="admin-verify",signup=authMode==="signup";
+  $("#authTitle").textContent=adminVerify?"관리자 2단계 인증":verify?"이메일 인증":signup?"Mirae 계정 만들기":"Mirae에 로그인";
+  $("#authDesc").textContent=adminVerify?"관리자 이메일로 전송된 6자리 인증 코드를 입력하세요.":verify?"이메일로 받은 6자리 인증 코드를 입력하세요.":signup?"회원가입을 완료하려면 이메일 인증이 필요합니다.":"계정으로 대화 기록과 설정을 동기화하세요.";
+  $("#nameField").classList.toggle("hidden",!signup);$("#passwordField").classList.toggle("hidden",verify);$("#codeField").classList.toggle("hidden",!verify);$("#verifyNote").classList.toggle("hidden",!verify);$("#email").readOnly=adminVerify;
+  $("#authSubmit").textContent=adminVerify?"인증하고 관리자 로그인":verify?"인증하고 가입 완료":signup?"인증 코드 보내기":"로그인";
+  $("#resendCode").classList.toggle("hidden",!verify||adminVerify);$("#authSwitch").classList.toggle("hidden",verify);
   $("#authSwitch").textContent=signup?"이미 계정이 있다면 로그인":"처음이라면 회원가입";$("#authMsg").textContent="";
 }
 async function finishLogin(d){
-  user=d.user;if($("#conversationSearch"))$("#conversationSearch").value="";closeAuth();setAccountLabel();await Promise.all([loadSettings(),loadProfile(),loadHistory()]);fillSettings();newChat(false);
+  user=d.user;if($("#conversationSearch"))$("#conversationSearch").value="";closeAuth();setAccountLabel();newChat(false);
+  Promise.allSettled([loadSettings(),loadProfile(),loadHistory()]).then(()=>{fillSettings();setAccountLabel();renderHistory()});
 }
 $("#authSubmit").onclick=async()=>{
   $("#authMsg").textContent="";
@@ -746,8 +769,15 @@ $("#authSubmit").onclick=async()=>{
       authMode="verify";$("#email").value=pendingSignup.email;renderAuth();$("#code").focus();startResendTimer();
     }else if(authMode==="verify"){
       const d=await req("/auth/signup/verify",{method:"POST",body:JSON.stringify({email:pendingSignup.email,code:$("#code").value.trim()})});await finishLogin(d);
+    }else if(authMode==="admin-verify"){
+      const d=await req("/auth/login/2fa/verify",{method:"POST",body:JSON.stringify({email:pendingAdminLogin.email,code:$("#code").value.trim()})});pendingAdminLogin=null;await finishLogin(d);
     }else{
-      const d=await req("/auth/login",{method:"POST",body:JSON.stringify({email:$("#email").value.trim(),password:$("#password").value})});await finishLogin(d);
+      const email=$("#email").value.trim(),password=$("#password").value;
+      const d=await req("/auth/login",{method:"POST",body:JSON.stringify({email,password})});
+      if(d.two_factor_required){
+        pendingAdminLogin={email:d.email};
+        authMode="admin-verify";$("#email").value=d.email;$("#code").value="";renderAuth();$("#code").focus();
+      }else await finishLogin(d);
     }
   }catch(e){$("#authMsg").textContent=e.message}
 };

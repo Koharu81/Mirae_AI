@@ -297,6 +297,11 @@ def init_db():
             id BIGSERIAL PRIMARY KEY,email TEXT NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,
             code_hash TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
         c.execute("CREATE INDEX IF NOT EXISTS mirae_email_verifications_email_idx ON mirae_email_verifications(email,created_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS mirae_admin_login_codes(
+            id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
+            code_hash TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
+        c.execute("CREATE INDEX IF NOT EXISTS mirae_admin_login_codes_user_idx ON mirae_admin_login_codes(user_id,created_at DESC)")
         c.execute("""CREATE TABLE IF NOT EXISTS mirae_skills(
             id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES mirae_users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',url TEXT NOT NULL,method TEXT NOT NULL DEFAULT 'POST',
@@ -502,15 +507,18 @@ async def startup():
     try:init_db()
     except Exception:pass
 
-def send_code(to,code):
+def send_code(to,code,purpose="signup"):
     if not RESEND_API_KEY:raise RuntimeError("RESEND_API_KEY is not configured.")
+    is_admin_login=purpose=="admin_login"
+    subject="[Mirae AI] 관리자 로그인 인증 코드" if is_admin_login else "[Mirae AI] 이메일 인증 코드"
+    heading="관리자 로그인 2단계 인증" if is_admin_login else "이메일 인증"
     payload={
         "from":RESEND_FROM,
         "to":[to],
-        "subject":"[Mirae AI] 이메일 인증 코드",
-        "text":f"Mirae AI 인증 코드: {code}\n\n이 코드는 5분 후 만료됩니다.",
-        "html":f"<div style='font-family:Arial,sans-serif;padding:30px'><h2>Mirae AI 이메일 인증</h2><p>인증 코드를 입력하세요.</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>이 코드는 <b>5분 후 만료</b>됩니다.</p></div>",
-        "tags":[{"name":"category","value":"confirm_email"}]
+        "subject":subject,
+        "text":f"Mirae AI {heading} 코드: {code}\n\n이 코드는 5분 후 만료됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.",
+        "html":f"<div style='font-family:Arial,sans-serif;padding:30px'><h2>Mirae AI {heading}</h2><p>인증 코드를 입력하세요.</p><div style='font-size:32px;font-weight:700;letter-spacing:8px'>{code}</div><p>이 코드는 <b>5분 후 만료</b>됩니다. 본인이 요청하지 않았다면 이 메일을 무시하세요.</p></div>",
+        "tags":[{"name":"category","value":"admin_2fa" if is_admin_login else "confirm_email"}]
     }
     with httpx.Client(timeout=20) as x:
         r=x.post(RESEND_URL,headers={"Authorization":f"Bearer {RESEND_API_KEY}","Content-Type":"application/json"},json=payload)
@@ -567,12 +575,49 @@ async def signup_verify(data:Verify,response:Response):
 
 @app.post("/auth/login")
 async def login(data:Login,response:Response):
-    with db() as c:u=c.execute("SELECT * FROM mirae_users WHERE email=%s",[data.email.strip().lower()]).fetchone()
+    email=data.email.strip().lower()
+    with db() as c:u=c.execute("SELECT * FROM mirae_users WHERE email=%s",[email]).fetchone()
     if not u or not pok(data.password,u["password_hash"]):raise HTTPException(401,"이메일 또는 비밀번호가 올바르지 않습니다.")
     if not u.get("email_verified",True):raise HTTPException(403,"이메일 인증이 완료되지 않은 계정입니다.")
+    if email==ADMIN_EMAIL:
+        with db() as c:
+            last=c.execute("SELECT created_at FROM mirae_admin_login_codes WHERE user_id=%s ORDER BY created_at DESC LIMIT 1",[u["id"]]).fetchone()
+            if last and last["created_at"]>datetime.now(timezone.utc)-timedelta(seconds=60):
+                raise HTTPException(429,"인증 코드는 60초마다 다시 요청할 수 있습니다.")
+            code=f"{secrets.randbelow(1000000):06d}"
+            c.execute("DELETE FROM mirae_admin_login_codes WHERE user_id=%s",[u["id"]])
+            c.execute("INSERT INTO mirae_admin_login_codes(user_id,code_hash,expires_at) VALUES (%s,%s,%s)",[u["id"],digest(code),datetime.now(timezone.utc)+timedelta(minutes=5)])
+            c.commit()
+        try:await asyncio.to_thread(send_code,email,code,"admin_login")
+        except Exception as e:
+            with db() as c:c.execute("DELETE FROM mirae_admin_login_codes WHERE user_id=%s",[u["id"]]);c.commit()
+            raise HTTPException(503,"관리자 인증 메일을 보내지 못했습니다. 이메일 발송 설정을 확인해 주세요.")
+        return {"two_factor_required":True,"email":email,"expires_in":300}
     set_session(response,u["id"])
     with db() as c:c.execute("UPDATE mirae_users SET last_signed_in=now(),updated_at=now() WHERE id=%s",[u["id"]]);c.commit()
     return {"user":{"id":u["id"],"email":u["email"],"name":u["name"]}}
+
+@app.post("/auth/login/2fa/verify")
+async def verify_admin_login(data:Verify,response:Response):
+    email=data.email.strip().lower()
+    if email!=ADMIN_EMAIL:raise HTTPException(403,"관리자 계정만 2단계 인증을 사용할 수 있습니다.")
+    with db() as c:
+        user_row=c.execute("SELECT id,email,name FROM mirae_users WHERE email=%s",[email]).fetchone()
+        if not user_row:raise HTTPException(401,"인증할 계정을 찾을 수 없습니다.")
+        challenge=c.execute("SELECT * FROM mirae_admin_login_codes WHERE user_id=%s ORDER BY created_at DESC LIMIT 1",[user_row["id"]]).fetchone()
+        if not challenge or challenge["expires_at"]<=datetime.now(timezone.utc):
+            c.execute("DELETE FROM mirae_admin_login_codes WHERE user_id=%s",[user_row["id"]]);c.commit()
+            raise HTTPException(401,"인증 코드가 만료되었습니다. 다시 로그인해 주세요.")
+        if challenge["attempts"]>=5:
+            c.execute("DELETE FROM mirae_admin_login_codes WHERE user_id=%s",[user_row["id"]]);c.commit()
+            raise HTTPException(429,"인증 시도 횟수를 초과했습니다. 다시 로그인해 주세요.")
+        if not hmac.compare_digest(digest(data.code.strip()),challenge["code_hash"]):
+            c.execute("UPDATE mirae_admin_login_codes SET attempts=attempts+1 WHERE id=%s",[challenge["id"]]);c.commit()
+            raise HTTPException(401,"인증 코드가 올바르지 않습니다.")
+        c.execute("DELETE FROM mirae_admin_login_codes WHERE user_id=%s",[user_row["id"]])
+        c.execute("UPDATE mirae_users SET last_signed_in=now(),updated_at=now() WHERE id=%s",[user_row["id"]]);c.commit()
+    set_session(response,user_row["id"])
+    return {"user":{"id":user_row["id"],"email":user_row["email"],"name":user_row["name"]}}
 
 @app.post("/auth/logout")
 async def logout(request:Request,response:Response):
