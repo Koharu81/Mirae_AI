@@ -81,20 +81,38 @@ if(conversationSearch){
   fillSettings();renderHistory();newChat(false);setupTools();
   try{
     const m=await req("/auth/me");user=m.user;setAccountLabel();
-    Promise.all([loadSettings(),loadProfile(),loadHistory()]).then(()=>{fillSettings();setAccountLabel();renderHistory()});
-  }catch{}
+    Promise.allSettled([loadSettings(),loadProfile(),loadHistory()]).then(results=>{
+      fillSettings();setAccountLabel();renderHistory();
+      const failed=results.filter(x=>x.status==="rejected");
+      if(failed.length&&$("#globalStatus"))$("#globalStatus").textContent="일부 계정 데이터를 불러오지 못했습니다: "+failed.map(x=>x.reason?.message||"알 수 없는 오류").join(" · ");
+    });
+  }catch(e){
+    if($("#globalStatus"))$("#globalStatus").textContent="로그인 상태 확인 실패: "+(e.message||"서버에 연결할 수 없습니다.");
+  }
 }
-async function loadSettings(){if(settingsLoaded)return;try{settings=await req("/settings");settingsLoaded=true}catch{}}
-async function loadProfile(){if(user&& !profileLoaded)try{applyProfile(await req("/profile"));profileLoaded=true}catch{}}
+async function loadSettings(){
+  if(settingsLoaded)return;
+  settings=await req("/settings");
+  settingsLoaded=true;
+}
+async function loadProfile(){
+  if(!user||profileLoaded)return;
+  applyProfile(await req("/profile"));
+  profileLoaded=true;
+}
 async function loadHistory(){
   if(!user||historyLoaded)return;
-  try{
-    const convs=await req("/conversations");
-    restoreServer([],convs);
-    await loadConversationFolders();
-    historyLoaded=true;
-    renderHistory();
-  }catch{}
+  let convs=[],rows=[],errors=[];
+  try{convs=await req("/conversations");}catch(e){errors.push("대화 목록: "+e.message);}
+  try{rows=await req("/history?limit=500");}catch(e){errors.push("대화 기록: "+e.message);}
+  if(!Array.isArray(convs))convs=[];
+  if(!Array.isArray(rows))rows=[];
+  if(!convs.length&&!rows.length&&errors.length)throw Error(errors.join(" · "));
+  restoreServer(rows,convs);
+  await loadConversationFolders();
+  historyLoaded=true;
+  renderHistory();
+  if(errors.length&&$("#globalStatus"))$("#globalStatus").textContent=errors.join(" · ");
 }
 function setAccountLabel(){
   if($("#accountName"))$("#accountName").textContent=user?(profile.name||user.name):"계정";
@@ -597,7 +615,16 @@ function openConversationMenu(row,c){
   menu.append(fav,share,folder,rename,del);row.appendChild(menu);
 }
 let conversationFolders=[];
-async function loadConversationFolders(){if(!user)return;try{conversationFolders=await req("/conversation-folders")}catch{conversationFolders=[]}}
+async function loadConversationFolders(){
+  if(!user)return;
+  try{
+    const rows=await req("/conversation-folders");
+    conversationFolders=Array.isArray(rows)?rows:[];
+  }catch(e){
+    conversationFolders=[];
+    if($("#globalStatus"))$("#globalStatus").textContent="대화 폴더를 불러오지 못했습니다: "+(e.message||"알 수 없는 오류");
+  }
+}
 async function toggleFavorite(c){try{const d=await req("/conversations/"+encodeURIComponent(c.id)+"/favorite",{method:"PUT",body:JSON.stringify({favorite:!c.favorite})});c.favorite=!!d.favorite;renderHistory();closeConversationMenus()}catch(e){alert(e.message)}}
 async function shareConversation(c,button){
   try{
