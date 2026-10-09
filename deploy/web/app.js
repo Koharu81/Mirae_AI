@@ -579,7 +579,7 @@ function restoreServer(rows,convs=[]){
     }
   }
   const stamp=c=>{const v=meta[c.id]?.updated_at||c.updated_at||meta[c.id]?.created_at||c.created_at;const n=Date.parse(v||0);return Number.isFinite(n)?n:0};
-  chats=merged.sort((x,y)=>stamp(y)-stamp(x)).slice(0,100);
+  chats=merged.sort((x,y)=>stamp(y)-stamp(x));
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
@@ -675,7 +675,11 @@ async function loadChat(id){
   $("#messages").innerHTML="<div class='history-loading'>대화를 불러오는 중</div>";
   closeSidebar();
   try{
-    if(!Array.isArray(c.messages)||!c.messages.length){
+    if(user&&!String(id).startsWith("legacy-")){
+      const rows=await req("/conversations/"+encodeURIComponent(id)+"/messages");
+      c.messages=rows.map(x=>({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""}));
+      localStorage.setItem("mirae-local",JSON.stringify(chats));
+    }else if(!Array.isArray(c.messages)||!c.messages.length){
       const rows=await req("/conversations/"+encodeURIComponent(id)+"/messages");
       c.messages=rows.map(x=>({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""}));
       localStorage.setItem("mirae-local",JSON.stringify(chats));
@@ -699,7 +703,7 @@ function saveLocal(){
   if(!c){c={id:currentId,title:currentTitle||"새 대화",messages:[],created_at:now};chats.push(c)}
   c.messages=current;c.title=currentTitle||c.title||"새 대화";c.updated_at=now;
   chats.sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
-  chats=chats.slice(0,100);localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
+  localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
 }
 function parseSSEBlock(block,box,state){
   let ev="message",data="";
