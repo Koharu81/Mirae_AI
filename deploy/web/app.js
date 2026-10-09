@@ -106,21 +106,37 @@ function syncAdminButton(){
 }
 async function openAdminPanel(){
   if(!user||String(user.email||"").toLowerCase()!=="admin@koharu.live")return;
+  document.querySelectorAll(".admin-tab").forEach(b=>b.classList.toggle("active",b.dataset.adminPage==="overview"));
+  document.querySelectorAll(".admin-page").forEach(p=>p.classList.toggle("hidden",p.id!=="admin-overview"));
+  $("#adminStatus").textContent="관리자 정보를 불러오는 중…";
   $("#adminOverlay").classList.remove("hidden");
+  if(window.lucide)lucide.createIcons();
   await loadAdminOverview();
 }
 function closeAdminPanel(){$("#adminOverlay").classList.add("hidden")}
 async function loadAdminOverview(){
-  try{
-    const [o,u,l,s]=await Promise.all([req("/admin/overview"),req("/admin/users"),req("/admin/logs?limit=120"),req("/admin/settings")]);
+  const jobs=await Promise.allSettled([
+    req("/admin/overview"),
+    req("/admin/users"),
+    req("/admin/logs?limit=120"),
+    req("/admin/settings")
+  ]);
+  const failures=[];
+  const [overview,users,logs,settingsResult]=jobs;
+  if(overview.status==="fulfilled"){
+    const o=overview.value;
     $("#adminUsersCount").textContent=String(o.users??0);
     $("#adminSessionsCount").textContent=String(o.active_sessions??0);
     $("#adminAccessCount").textContent=String(o.access_24h??0);
     $("#adminRiskCount").textContent=String((o.risks||[]).reduce((a,x)=>a+Number(x.count||0),0));
-    renderAdminUsers(u);renderAdminLogs(l);fillAdminSettings(s);
-    await Promise.all([loadAdminSecurity(),loadAdminTraffic()]);
-    if(window.lucide)lucide.createIcons();
-  }catch(e){$("#adminStatus").textContent=e.message||"관리자 정보를 불러오지 못했습니다."}
+  }else failures.push("개요: "+overview.reason.message);
+  if(users.status==="fulfilled")renderAdminUsers(users.value);else failures.push("사용자: "+users.reason.message);
+  if(logs.status==="fulfilled")renderAdminLogs(logs.value);else failures.push("로그: "+logs.reason.message);
+  if(settingsResult.status==="fulfilled")fillAdminSettings(settingsResult.value);else failures.push("설정: "+settingsResult.reason.message);
+  const detail=await Promise.allSettled([loadAdminSecurity(),loadAdminTraffic()]);
+  detail.forEach((x,i)=>{if(x.status==="rejected")failures.push((i?"트래픽":"보안")+": "+x.reason.message)});
+  $("#adminStatus").textContent=failures.length?failures.join(" · "):"관리자 정보가 최신 상태입니다.";
+  if(window.lucide)lucide.createIcons();
 }
 async function loadAdminSecurity(){
   try{
