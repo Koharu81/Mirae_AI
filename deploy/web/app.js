@@ -94,8 +94,7 @@ if(conversationSearch){
 }
 async function loadSettings(){
   if(settingsLoaded)return;
-  const result=await req("/settings");
-  settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7,...result};
+  settings=await req("/settings");
   settingsLoaded=true;
 }
 async function loadProfile(){
@@ -570,7 +569,7 @@ function restoreServer(rows,convs=[]){
   const localChats=(()=>{try{const raw=JSON.parse(localStorage.getItem("mirae-local")||"[]");return Array.isArray(raw)?raw:[]}catch{return[]} })();
   const merged=[...Object.values(by)];
   for(const old of localChats){
-    if(!old?.id||!old.messages?.length||!by[old.id])continue;
+    if(!old?.id||!old.messages?.length)continue;
     const existing=merged.find(c=>c.id===old.id);
     if(!existing)merged.push(old);
     else{
@@ -580,20 +579,13 @@ function restoreServer(rows,convs=[]){
     }
   }
   const stamp=c=>{const v=meta[c.id]?.updated_at||c.updated_at||meta[c.id]?.created_at||c.created_at;const n=Date.parse(v||0);return Number.isFinite(n)?n:0};
-  for(const c of merged){
-    if(isEmailTitle(c.title)){
-      const firstUser=c.messages?.find(m=>m.role==="user");
-      c.title=conversationTitle(firstUser?.content||"새 대화");
-    }
-  }
-  chats=merged.sort((x,y)=>stamp(y)-stamp(x));
+  chats=merged.sort((x,y)=>stamp(y)-stamp(x)).slice(0,100);
   localStorage.setItem("mirae-local",JSON.stringify(chats));
 }
 function renderHistory(){
   const h=$("#history");h.innerHTML="";
   const search=$("#conversationSearch");
-  let q=String(search?.value||"").trim().toLowerCase();
-  if(user?.email&&q===user.email.toLowerCase()){q="";if(search)search.value="";}
+  const q=String(search?.value||"").trim().toLowerCase();
   const stamp=c=>{const n=Date.parse(c.updated_at||c.created_at||0);return Number.isFinite(n)?n:0};
   let list=chats.filter(c=>!q||String(c.title||"").toLowerCase().includes(q)||c.messages.some(m=>String(m.content||"").toLowerCase().includes(q))).sort((a,b)=>stamp(b)-stamp(a));
   const favorites=list.filter(c=>c.favorite);
@@ -683,11 +675,7 @@ async function loadChat(id){
   $("#messages").innerHTML="<div class='history-loading'>대화를 불러오는 중</div>";
   closeSidebar();
   try{
-    if(user&&!String(id).startsWith("legacy-")){
-      const rows=await req("/conversations/"+encodeURIComponent(id)+"/messages");
-      c.messages=rows.map(x=>({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""}));
-      localStorage.setItem("mirae-local",JSON.stringify(chats));
-    }else if(!Array.isArray(c.messages)||!c.messages.length){
+    if(!Array.isArray(c.messages)||!c.messages.length){
       const rows=await req("/conversations/"+encodeURIComponent(id)+"/messages");
       c.messages=rows.map(x=>({role:x.role,content:x.content,sources:x.sources||[],attachments:x.attachments||[],feedback_key:x.role==="assistant"?simpleHash(x.content):""}));
       localStorage.setItem("mirae-local",JSON.stringify(chats));
@@ -711,7 +699,7 @@ function saveLocal(){
   if(!c){c={id:currentId,title:currentTitle||"새 대화",messages:[],created_at:now};chats.push(c)}
   c.messages=current;c.title=currentTitle||c.title||"새 대화";c.updated_at=now;
   chats.sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
-  localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
+  chats=chats.slice(0,100);localStorage.setItem("mirae-local",JSON.stringify(chats));renderHistory();
 }
 function parseSSEBlock(block,box,state){
   let ev="message",data="";
@@ -798,13 +786,8 @@ function renderAuth(){
   $("#authSwitch").textContent=signup?"이미 계정이 있다면 로그인":"처음이라면 회원가입";$("#authMsg").textContent="";
 }
 async function finishLogin(d){
-  user=d.user;settingsLoaded=false;profileLoaded=false;historyLoaded=false;conversationFolders=[];
-  if($("#conversationSearch"))$("#conversationSearch").value="";
-  closeAuth();setAccountLabel();newChat(false);
-  const results=await Promise.allSettled([loadSettings(),loadProfile(),loadHistory()]);
-  fillSettings();setAccountLabel();renderHistory();
-  const failed=results.filter(x=>x.status==="rejected");
-  if(failed.length&&$("#globalStatus"))$("#globalStatus").textContent="일부 계정 데이터를 불러오지 못했습니다: "+failed.map(x=>x.reason?.message||"알 수 없는 오류").join(" · ");
+  user=d.user;if($("#conversationSearch"))$("#conversationSearch").value="";closeAuth();setAccountLabel();newChat(false);
+  Promise.allSettled([loadSettings(),loadProfile(),loadHistory()]).then(()=>{fillSettings();setAccountLabel();renderHistory()});
 }
 $("#authSubmit").onclick=async()=>{
   $("#authMsg").textContent="";
@@ -930,7 +913,7 @@ $("#profileAvatarFile").onchange=()=>{
   reader.onload=()=>{profile.avatar_url=String(reader.result||"");setAvatar($("#profileAvatar"),profile.name||user?.name||"M",profile.avatar_url);};
   reader.readAsDataURL(file);
 };
-$("#logout").onclick=async()=>{try{await req("/auth/logout",{method:"POST"})}catch{}user=null;settingsLoaded=false;profileLoaded=false;historyLoaded=false;settings={theme:"light",personality:"balanced",instructions:"",web_search:true,temperature:.7};profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};chats=[];conversationFolders=[];setAccountLabel();syncAdminButton();fillSettings();$("#settingsOverlay").classList.add("hidden");$("#adminOverlay")?.classList.add("hidden");newChat(false);renderHistory()};
+$("#logout").onclick=async()=>{try{await req("/auth/logout",{method:"POST"})}catch{}user=null;setAccountLabel();syncAdminButton();$("#settingsOverlay").classList.add("hidden");$("#adminOverlay")?.classList.add("hidden");newChat(false)};
 $("#clearLocal").onclick=()=>{localStorage.removeItem("mirae-local");chats=[];newChat(false)};
 async function loadMemories(){
   if(!user)return;
@@ -1068,5 +1051,3 @@ function closeSidebar(){$("#sidebar").classList.remove("open")}
 $("#chat").onclick=closeSidebar;
 const mq=matchMedia("(prefers-color-scheme:dark)");if(mq.addEventListener)mq.addEventListener("change",()=>{if(settings.theme==="system")applyTheme()});
 renderAuth();boot();if(window.lucide)lucide.createIcons();
-
-[executed on device: DESKTOP-Q2SGEF8 (cc8c9b60-743b-4124-a658-da7007809e32)]
