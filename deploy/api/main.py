@@ -916,7 +916,7 @@ async def admin_security(request:Request):
 async def admin_traffic(request:Request):
     require_admin(request)
     with db() as c:
-        stats=c.execute("""SELECT COUNT(*) AS requests,COALESCE(AVG(latency_ms),0) AS avg_latency,COALESCE(AVG(CASE WHEN status<400 THEN 1.0 ELSE 0.0 END)*100,100) AS success_rate,COUNT(*) FILTER(WHERE status>=500) AS server_errors FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours'""").fetchone()
+        stats=c.execute("""SELECT COUNT(*) AS requests,COALESCE(AVG(latency_ms),0) AS avg_latency,COALESCE(AVG(latency_ms),0) AS avg_latency_ms,COALESCE(AVG(CASE WHEN status<400 THEN 1.0 ELSE 0.0 END)*100,100) AS success_rate,COUNT(*) FILTER(WHERE status>=500) AS server_errors FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours'""").fetchone()
         endpoints=c.execute("""SELECT path,COUNT(*) AS count FROM mirae_access_logs WHERE created_at>=now()-interval '24 hours' GROUP BY path ORDER BY count DESC LIMIT 20""").fetchall()
     return {**dict(stats),"endpoints":endpoints}
 
