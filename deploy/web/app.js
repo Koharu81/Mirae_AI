@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s);
-const API="/api";
+const API="https://api.koharu.live";
 const MIRAE_LOGO="/mirae-logo.png";
 let user=null;
 let profile={name:"",email:"",bio:"",birth_date:null,avatar_url:""};
